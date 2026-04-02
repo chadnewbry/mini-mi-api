@@ -169,12 +169,31 @@ def remove_background_with_poofbg(api_key: str, source: Path, destination: Path)
         },
         method="POST",
     )
-    try:
-        with urllib.request.urlopen(request, timeout=120) as response:
-            destination.write_bytes(response.read())
-    except urllib.error.HTTPError as error:
-        detail = error.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"poof.bg background removal failed ({error.code}): {detail}") from error
+    max_attempts = 5
+    for attempt in range(1, max_attempts + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=120) as response:
+                destination.write_bytes(response.read())
+            return
+        except urllib.error.HTTPError as error:
+            detail = error.read().decode("utf-8", errors="replace")
+            if error.code == 429 and attempt < max_attempts:
+                wait = 2 ** attempt
+                print(f"  rate limited, retrying in {wait}s (attempt {attempt}/{max_attempts})", flush=True)
+                time.sleep(wait)
+                request = urllib.request.Request(
+                    "https://api.poof.bg/v1/remove",
+                    data=body,
+                    headers={
+                        "x-api-key": api_key,
+                        "Content-Type": f"multipart/form-data; boundary={boundary}",
+                        "Accept": "image/png",
+                        "User-Agent": DEFAULT_USER_AGENT,
+                    },
+                    method="POST",
+                )
+                continue
+            raise RuntimeError(f"poof.bg background removal failed ({error.code}): {detail}") from error
 
 
 def remove_background_with_rembg(
@@ -332,11 +351,13 @@ def main() -> int:
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    for frame_path in frames:
+    for index, frame_path in enumerate(frames):
         destination = args.output_dir / frame_path.name
         print(f"Cleaning {frame_path.name}")
         if args.dry_run:
             continue
+        if index > 0 and args.engine == "poofbg":
+            time.sleep(0.5)
         clean_image(args, frame_path, destination, api_key)
 
     if not args.dry_run:
