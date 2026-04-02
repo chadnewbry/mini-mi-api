@@ -297,7 +297,14 @@ func generatorForConfig(config Config) (Generator, error) {
 }
 
 func (s *Server) Handler() http.Handler {
-	return s.authMiddleware(s.mux)
+	protected := s.authMiddleware(s.mux)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" {
+			s.handleHealth(w, r)
+			return
+		}
+		protected.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) routes() {
