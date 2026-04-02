@@ -18,7 +18,7 @@ The backend currently supports:
 - session creation, photo upload, candidate generation, selection, state generation, and asset download
 - queued background jobs with job polling
 - local-disk persistence for sessions, jobs, and generated assets
-- script-backed generation using the Mini Me Python and Swift pipeline in this repo
+- script-backed generation using the Mini Me Go, Python, and ffmpeg pipeline in this repo
 
 This is good enough for local development and a fast single-host deployment.
 
@@ -90,6 +90,15 @@ The default image generator script is now [scripts/generate_image.py](/Users/cha
 ```bash
 cd /Users/chadnewbry/dev/mini-mi-api
 bash scripts/smoke_test_script_mode.sh
+```
+
+For a deployed service:
+
+```bash
+cd /Users/chadnewbry/dev/mini-mi-api
+MINIME_BASE_URL=https://your-service.onrender.com \
+MINIME_DEVICE_TOKEN=your-device-token \
+bash scripts/test_hosted_backend.sh
 ```
 
 ## API

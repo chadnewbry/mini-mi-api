@@ -40,6 +40,14 @@ You can add others later if you change the generation stack.
 3. Use the included `render.yaml`.
 4. Set the required secrets.
 5. Deploy.
+6. Run the hosted smoke test:
+
+```bash
+cd /Users/chadnewbry/dev/mini-mi-api
+MINIME_BASE_URL=https://your-render-url.onrender.com \
+MINIME_DEVICE_TOKEN=your-device-token \
+bash scripts/test_hosted_backend.sh
+```
 
 The public API URL will be your Render service URL, for example:
 
