@@ -23,7 +23,7 @@ from pathlib import Path
 DEFAULT_USER_AGENT = "TongueApp/1.0 (+https://tongueassets.com)"
 DEFAULT_BASE_URL = "https://api.x.ai/v1"
 DEFAULT_MODEL = "grok-imagine-image"
-DEFAULT_ENGINE = "rembg"
+DEFAULT_ENGINE = "poofbg"
 DEFAULT_REMBG_BIN = os.environ.get("REMBG_BIN", "rembg")
 DEFAULT_REMBG_MODEL = "isnet-general-use"
 DEFAULT_PROMPT = (
@@ -42,7 +42,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-file", type=Path)
     parser.add_argument("--frame-prefix", default="frame")
     parser.add_argument("--gif-filename", default="transparent.gif")
-    parser.add_argument("--engine", default=DEFAULT_ENGINE, choices=["rembg", "xai"])
+    parser.add_argument("--engine", default=DEFAULT_ENGINE, choices=["rembg", "xai", "poofbg"])
     parser.add_argument("--rembg-bin", default=DEFAULT_REMBG_BIN)
     parser.add_argument("--rembg-model", default=DEFAULT_REMBG_MODEL)
     parser.add_argument("--post-process-mask", action="store_true")
@@ -139,6 +139,43 @@ def write_response_image(payload: dict, destination: Path) -> None:
     download_file(image_url, destination)
 
 
+def ensure_poofbg_api_key() -> str:
+    api_key = os.environ.get("POOFBG_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("POOFBG_API_KEY is not set.")
+    return api_key
+
+
+def remove_background_with_poofbg(api_key: str, source: Path, destination: Path) -> None:
+    boundary = f"----PoofBgBoundary{int(time.time() * 1000)}"
+    image_data = source.read_bytes()
+    mime_type, _ = mimetypes.guess_type(source.name)
+    resolved_mime = mime_type or "image/png"
+
+    body = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="image_file"; filename="{source.name}"\r\n'
+        f"Content-Type: {resolved_mime}\r\n\r\n"
+    ).encode("utf-8") + image_data + f"\r\n--{boundary}--\r\n".encode("utf-8")
+
+    request = urllib.request.Request(
+        "https://api.poof.bg/v1/remove",
+        data=body,
+        headers={
+            "x-api-key": api_key,
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+            "Accept": "image/png",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response:
+            destination.write_bytes(response.read())
+    except urllib.error.HTTPError as error:
+        detail = error.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"poof.bg background removal failed ({error.code}): {detail}") from error
+
+
 def remove_background_with_rembg(
     rembg_bin: str,
     model: str,
@@ -199,6 +236,11 @@ def resolve_pillow_python(rembg_bin: str) -> str:
 
 
 def clean_image(args: argparse.Namespace, source: Path, destination: Path, api_key: str) -> None:
+    if args.engine == "poofbg":
+        poofbg_key = ensure_poofbg_api_key()
+        remove_background_with_poofbg(poofbg_key, source, destination)
+        return
+
     if args.engine == "rembg":
         remove_background_with_rembg(
             rembg_bin=args.rembg_bin,
