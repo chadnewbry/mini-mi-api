@@ -221,10 +221,11 @@ func (g ScriptGenerator) runMainAgentScript(ctx context.Context, sessionID strin
 		return err
 	}
 
-	commandArgs := append([]string{filepath.Join(repoRoot, relativeScriptPath)}, args...)
+	commandArgs := append([]string{"-u", filepath.Join(repoRoot, relativeScriptPath)}, args...)
 	command := exec.CommandContext(ctx, pythonExecutable, commandArgs...)
 	command.Dir = repoRoot
 	command.Env = append(os.Environ(),
+		"PYTHONUNBUFFERED=1",
 		"TONGUE_REPO_ROOT="+repoRoot,
 		"TONGUE_MAIN_AGENT_WORKSPACE_ROOT="+workspaceRoot,
 	)
