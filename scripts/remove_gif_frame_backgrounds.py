@@ -165,6 +165,7 @@ def remove_background_with_poofbg(api_key: str, source: Path, destination: Path)
             "x-api-key": api_key,
             "Content-Type": f"multipart/form-data; boundary={boundary}",
             "Accept": "image/png",
+            "User-Agent": DEFAULT_USER_AGENT,
         },
         method="POST",
     )
