@@ -13,8 +13,6 @@ FROM python:3.11-slim-bookworm
 WORKDIR /app
 
 ENV PYTHONUNBUFFERED=1 \
-    PORT=8080 \
-    MINIME_PORT=8080 \
     MINIME_DATA_ROOT=/data \
     MINIME_GENERATOR_MODE=script \
     MINIME_RUN_WORKERS=true \
