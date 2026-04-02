@@ -1296,10 +1296,18 @@ func (s *Server) storePath() string {
 
 func absoluteURL(r *http.Request, path string) string {
 	scheme := "http"
-	if r.TLS != nil {
+	if forwardedProto := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Proto"), ",")[0]); forwardedProto != "" {
+		scheme = forwardedProto
+	} else if r.TLS != nil {
 		scheme = "https"
 	}
-	return scheme + "://" + r.Host + path
+
+	host := r.Host
+	if forwardedHost := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Host"), ",")[0]); forwardedHost != "" {
+		host = forwardedHost
+	}
+
+	return scheme + "://" + host + path
 }
 
 func optionalRemoteAssetRecord(record remoteAssetRecord) *remoteAssetRecord {
