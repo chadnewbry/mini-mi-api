@@ -13,6 +13,8 @@ services:
       mountPath: /data
       sizeGB: 10
     envVars:
+      - key: MINIME_PORT
+        value: "10000"
       - key: MINIME_DATA_ROOT
         value: /data
       - key: MINIME_GENERATOR_MODE
