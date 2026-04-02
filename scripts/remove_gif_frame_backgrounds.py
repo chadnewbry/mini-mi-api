@@ -380,26 +380,12 @@ def main() -> int:
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    if not args.dry_run and args.engine == "poofbg":
-        poofbg_concurrency = 8
-        print(f"Processing {len(frames)} frames ({poofbg_concurrency} concurrent workers)")
-
-        def process_frame(frame_path: Path) -> None:
-            destination = args.output_dir / frame_path.name
-            clean_image(args, frame_path, destination, api_key)
-            print(f"  done {frame_path.name}", flush=True)
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=poofbg_concurrency) as pool:
-            futures = {pool.submit(process_frame, fp): fp for fp in frames}
-            for future in concurrent.futures.as_completed(futures):
-                future.result()
-    else:
-        for frame_path in frames:
-            destination = args.output_dir / frame_path.name
-            print(f"Cleaning {frame_path.name}")
-            if args.dry_run:
-                continue
-            clean_image(args, frame_path, destination, api_key)
+    for frame_path in frames:
+        destination = args.output_dir / frame_path.name
+        print(f"Cleaning {frame_path.name}")
+        if args.dry_run:
+            continue
+        clean_image(args, frame_path, destination, api_key)
 
     if not args.dry_run:
         rebuild_gif(
