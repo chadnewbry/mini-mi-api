@@ -203,7 +203,7 @@ func (g ScriptGenerator) syncSessionToWorkspace(env GenerationEnvironment, sessi
 func (g ScriptGenerator) runMainAgentScript(sessionID string, env GenerationEnvironment, relativeScriptPath string, args []string) error {
 	pythonExecutable := g.PythonExecutable
 	if strings.TrimSpace(pythonExecutable) == "" {
-		pythonExecutable = "/usr/bin/python3"
+		pythonExecutable = "python3"
 	}
 
 	dataRoot, err := filepath.Abs(env.DataRoot)
