@@ -12,7 +12,7 @@ var ErrNoSelectedAsset = errors.New("select a source photo or candidate before g
 type Generator interface {
 	Bootstrap(ctx context.Context, env GenerationEnvironment, session *sessionRecord) error
 	GenerateCandidates(ctx context.Context, env GenerationEnvironment, session *sessionRecord) error
-	GenerateStates(ctx context.Context, env GenerationEnvironment, session *sessionRecord, states []string) error
+	GenerateStates(ctx context.Context, env GenerationEnvironment, session *sessionRecord, states []string, statePrompts map[string]string) error
 }
 
 type GenerationEnvironment struct {
@@ -59,7 +59,7 @@ func (PlaceholderGenerator) GenerateCandidates(_ context.Context, env Generation
 	return nil
 }
 
-func (PlaceholderGenerator) GenerateStates(_ context.Context, env GenerationEnvironment, session *sessionRecord, states []string) error {
+func (PlaceholderGenerator) GenerateStates(_ context.Context, env GenerationEnvironment, session *sessionRecord, states []string, _ map[string]string) error {
 	baseAsset := findAssetByID(session.Candidates, session.SelectedCandidateID)
 	if baseAsset == nil {
 		baseAsset = findAssetByID(session.SourcePhotos, session.SelectedSourcePhotoID)

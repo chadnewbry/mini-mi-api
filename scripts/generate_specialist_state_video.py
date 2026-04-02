@@ -92,7 +92,7 @@ STATE_PROMPT_TEMPLATES = {
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate a specialist state video via xAI.")
     parser.add_argument("--specialist", required=True, help="Specialist id, used for deterministic output layout.")
-    parser.add_argument("--state", required=True, choices=sorted(STATE_PROMPT_TEMPLATES), help="Specialist state to generate.")
+    parser.add_argument("--state", required=True, help="State name, used for output directory layout.")
     parser.add_argument("--input-image", required=True, type=Path, help="Still image used as the source identity reference.")
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--model", default=DEFAULT_MODEL)
@@ -101,6 +101,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--poll-interval-seconds", type=int, default=DEFAULT_POLL_INTERVAL_SECONDS)
     parser.add_argument("--timeout-seconds", type=int, default=DEFAULT_TIMEOUT_SECONDS)
     parser.add_argument("--base-url", default=os.environ.get("XAI_BASE_URL", "https://api.x.ai/v1"))
+    parser.add_argument("--prompt", default="", help="Full prompt to use. Overrides the built-in state template.")
     parser.add_argument("--prompt-suffix", default="", help="Optional extra prompt text appended to the built-in state prompt.")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
@@ -126,8 +127,13 @@ def manifest_path(output_root: Path, specialist_id: str, state: str) -> Path:
     return state_directory(output_root, specialist_id, state) / "manifest.json"
 
 
-def build_prompt(state: str, prompt_suffix: str, subject_label: str) -> str:
-    prompt = STATE_PROMPT_TEMPLATES[state].format(subject_label=subject_label.strip() or "Tongue specialist mascot")
+def build_prompt(state: str, prompt_override: str, prompt_suffix: str, subject_label: str) -> str:
+    if prompt_override.strip():
+        return prompt_override.strip()
+    template = STATE_PROMPT_TEMPLATES.get(state)
+    if template is None:
+        raise SystemExit(f"No built-in prompt template for state '{state}'. Provide --prompt instead.")
+    prompt = template.format(subject_label=subject_label.strip() or "Tongue specialist mascot")
     suffix = prompt_suffix.strip()
     return f"{prompt} {suffix}".strip() if suffix else prompt
 
@@ -258,7 +264,7 @@ def main() -> int:
             "sourceImagePath": str(source_image_path),
             "model": args.model,
             "durationSeconds": args.duration,
-            "prompt": build_prompt(args.state, args.prompt_suffix, args.subject_label),
+            "prompt": build_prompt(args.state, args.prompt, args.prompt_suffix, args.subject_label),
         }
     )
 

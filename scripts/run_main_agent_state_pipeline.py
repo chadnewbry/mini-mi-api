@@ -152,6 +152,10 @@ def main() -> int:
             "--state",
             state,
         ]
+        state_prompts = manifest.get("statePrompts") or {}
+        state_prompt = state_prompts.get(state, "")
+        if state_prompt:
+            command.extend(["--prompt", state_prompt])
         if args.prompt_suffix.strip():
             command.extend(["--prompt-suffix", args.prompt_suffix.strip()])
 

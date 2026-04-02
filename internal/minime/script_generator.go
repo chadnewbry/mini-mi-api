@@ -32,6 +32,7 @@ type scriptManifest struct {
 	PublishedPreviewPath   string            `json:"publishedPreviewPath"`
 	StateAssetPaths        map[string]string `json:"stateAssetPaths"`
 	StateSourceImagePaths  map[string]string `json:"stateSourceImagePaths"`
+	StatePrompts           map[string]string `json:"statePrompts,omitempty"`
 	Status                 string            `json:"status"`
 	Notes                  string            `json:"notes"`
 }
@@ -110,8 +111,8 @@ func (g ScriptGenerator) GenerateCandidates(ctx context.Context, env GenerationE
 	return nil
 }
 
-func (g ScriptGenerator) GenerateStates(ctx context.Context, env GenerationEnvironment, session *sessionRecord, states []string) error {
-	if _, _, err := g.syncSessionToWorkspace(ctx, env, session); err != nil {
+func (g ScriptGenerator) GenerateStates(ctx context.Context, env GenerationEnvironment, session *sessionRecord, states []string, statePrompts map[string]string) error {
+	if _, _, err := g.syncSessionToWorkspace(ctx, env, session, statePrompts); err != nil {
 		return err
 	}
 
@@ -173,7 +174,7 @@ func (g ScriptGenerator) GenerateStates(ctx context.Context, env GenerationEnvir
 	return nil
 }
 
-func (g ScriptGenerator) syncSessionToWorkspace(ctx context.Context, env GenerationEnvironment, session *sessionRecord) (scriptManifest, string, error) {
+func (g ScriptGenerator) syncSessionToWorkspace(ctx context.Context, env GenerationEnvironment, session *sessionRecord, statePrompts ...map[string]string) (scriptManifest, string, error) {
 	if err := g.runMainAgentScript(
 		ctx,
 		session.ID,
@@ -198,6 +199,9 @@ func (g ScriptGenerator) syncSessionToWorkspace(ctx context.Context, env Generat
 	}
 	if manifest.StateSourceImagePaths == nil {
 		manifest.StateSourceImagePaths = map[string]string{}
+	}
+	if len(statePrompts) > 0 && statePrompts[0] != nil {
+		manifest.StatePrompts = statePrompts[0]
 	}
 	if err := writeScriptManifest(filepath.Join(workspaceRoot, "manifest.json"), manifest); err != nil {
 		return scriptManifest{}, "", err

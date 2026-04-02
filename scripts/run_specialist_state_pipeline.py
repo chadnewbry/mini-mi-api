@@ -38,6 +38,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-size", type=int, default=512)
     parser.add_argument("--rembg-model", default="isnet-general-use")
     parser.add_argument("--pipeline-mode", choices=["full", "safe"], default=DEFAULT_PIPELINE_MODE)
+    parser.add_argument("--prompt", default="", help="Full prompt override for video generation.")
     parser.add_argument("--prompt-suffix", default="", help="Optional extra prompt text appended to each animation generation prompt.")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
@@ -114,6 +115,8 @@ def main() -> int:
             "--duration",
             str(args.duration),
         ]
+        if args.prompt.strip():
+            command.extend(["--prompt", args.prompt.strip()])
         if args.prompt_suffix.strip():
             command.extend(["--prompt-suffix", args.prompt_suffix.strip()])
 

@@ -182,7 +182,8 @@ type jobRecord struct {
 	SessionID       string    `json:"session_id"`
 	Type            string    `json:"type"`
 	Status          string    `json:"status"`
-	RequestedStates []string  `json:"requested_states,omitempty"`
+	RequestedStates []string          `json:"requested_states,omitempty"`
+	StatePrompts    map[string]string `json:"state_prompts,omitempty"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
 	FinishedAt      time.Time `json:"finished_at,omitempty"`
@@ -244,8 +245,9 @@ type selectionRequest struct {
 }
 
 type statesGenerateRequest struct {
-	States       []string `json:"states"`
-	PromptSuffix string   `json:"prompt_suffix"`
+	States       []string          `json:"states"`
+	PromptSuffix string            `json:"prompt_suffix"`
+	StatePrompts map[string]string `json:"state_prompts"`
 }
 
 func NewServer(config Config) (*Server, error) {
@@ -322,6 +324,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/healthz", s.handleHealth)
 	s.mux.HandleFunc("/v1/minime/sessions", s.handleSessions)
 	s.mux.HandleFunc("/v1/minime/sessions/", s.handleSessionRoutes)
+	s.mux.HandleFunc("/v1/minime/states:generate", s.handleStatelessGenerateStates)
 	s.mux.HandleFunc("/v1/minime/jobs/", s.handleJobRoutes)
 	s.mux.HandleFunc("/v1/minime/assets/", s.handleAssetDownload)
 }
@@ -751,6 +754,83 @@ func (s *Server) handleGenerateStates(w http.ResponseWriter, r *http.Request, se
 		return
 	}
 	job := s.createQueuedJobLocked(session, "generate-states", normalizedStates)
+	job.StatePrompts = request.StatePrompts
+	session.Status = "queued-states"
+	session.CurrentStepLabel = "Queued state generation"
+	session.Notes = "State generation queued."
+	session.UpdatedAt = time.Now().UTC()
+	if err := s.persistStoreLocked(); err != nil {
+		s.mu.Unlock()
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	snapshot := s.snapshotForSession(r, session)
+	s.mu.Unlock()
+	s.enqueueJob(job.ID)
+
+	writeJSONWithHeader(w, http.StatusOK, snapshot, map[string]string{
+		"X-MiniMe-Job-ID": job.ID,
+	})
+}
+
+func (s *Server) handleStatelessGenerateStates(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		writeError(w, http.StatusBadRequest, "expected multipart form with image and request fields")
+		return
+	}
+
+	file, header, err := r.FormFile("image")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "missing image field")
+		return
+	}
+	defer file.Close()
+
+	var request statesGenerateRequest
+	if requestJSON := r.FormValue("request"); requestJSON != "" {
+		if err := json.Unmarshal([]byte(requestJSON), &request); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid request JSON: "+err.Error())
+			return
+		}
+	}
+
+	states := request.States
+	if len(states) == 0 {
+		states = defaultStates
+	}
+	normalizedStates, err := normalizeRequestedStates(states)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	s.mu.Lock()
+
+	session := &sessionRecord{
+		ID:        newID("session"),
+		Status:    "source-photos-imported",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+	s.sessions[session.ID] = session
+
+	asset, err := s.persistUploadedFileLocked(session.ID, "source-photos", header.Filename, header.Header.Get("Content-Type"), file)
+	if err != nil {
+		s.mu.Unlock()
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	session.SourcePhotos = []*assetRecord{asset}
+	session.SelectedSourcePhotoID = asset.ID
+	session.PublishedPreview = asset
+
+	job := s.createQueuedJobLocked(session, "generate-states", normalizedStates)
+	job.StatePrompts = request.StatePrompts
 	session.Status = "queued-states"
 	session.CurrentStepLabel = "Queued state generation"
 	session.Notes = "State generation queued."
@@ -1107,6 +1187,7 @@ func (s *Server) processJob(jobID string) {
 	workingSession := cloneSessionRecord(session)
 	jobType := job.Type
 	requestedStates := append([]string(nil), job.RequestedStates...)
+	statePrompts := job.StatePrompts
 	job.Status = "running"
 	job.UpdatedAt = time.Now().UTC()
 	switch jobType {
@@ -1142,7 +1223,7 @@ func (s *Server) processJob(jobID string) {
 	case "generate-candidates":
 		err = s.generator.GenerateCandidates(jobContext, s.generationEnvironment(), workingSession)
 	case "generate-states":
-		err = s.generator.GenerateStates(jobContext, s.generationEnvironment(), workingSession, requestedStates)
+		err = s.generator.GenerateStates(jobContext, s.generationEnvironment(), workingSession, requestedStates, statePrompts)
 	default:
 		err = fmt.Errorf("unsupported queued job type %q", jobType)
 	}
