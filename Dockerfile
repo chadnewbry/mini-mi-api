@@ -28,7 +28,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir uv rembg pillow
+RUN pip install --no-cache-dir uv "rembg[cpu]" pillow
 
 COPY --from=builder /out/minime-server /app/bin/minime-server
 COPY . /app
