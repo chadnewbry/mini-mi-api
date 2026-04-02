@@ -163,7 +163,7 @@ class RateLimiter:
             time.sleep(delay)
 
 
-_poofbg_limiter = RateLimiter(per_second=8)
+_poofbg_limiter = RateLimiter(per_second=0.5)
 
 
 def ensure_poofbg_api_key() -> str:
