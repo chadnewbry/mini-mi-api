@@ -836,7 +836,7 @@ func TestReloadRequeuesQueuedJobs(t *testing.T) {
 
 	reloadedJob := waitForJobTerminal(t, reloaded, job.ID)
 	if reloadedJob.Status != "completed" {
-		t.Fatalf("expected completed reloaded job status, got %q", reloadedJob.Status)
+		t.Fatalf("expected completed reloaded job status, got %q (error=%q summary=%q)", reloadedJob.Status, reloadedJob.Error, reloadedJob.Summary)
 	}
 
 	reloadedSession := fetchSessionSnapshot(t, reloaded, created.SessionID)

@@ -230,10 +230,16 @@ func (g ScriptGenerator) runMainAgentScript(sessionID string, env GenerationEnvi
 		command.Env = append(command.Env, "TONGUE_SPECIALIST_STATE_PIPELINE_SCRIPT="+g.StatePipelineScript)
 	}
 
+	fmt.Printf("[minime] running script %s for session %s\n", filepath.Base(relativeScriptPath), sessionID)
 	output, err := command.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("%s failed: %w\n%s", filepath.Base(relativeScriptPath), err, strings.TrimSpace(string(output)))
+	trimmedOutput := strings.TrimSpace(string(output))
+	if trimmedOutput != "" {
+		fmt.Printf("[minime] output from %s for session %s:\n%s\n", filepath.Base(relativeScriptPath), sessionID, trimmedOutput)
 	}
+	if err != nil {
+		return fmt.Errorf("%s failed: %w\n%s", filepath.Base(relativeScriptPath), err, trimmedOutput)
+	}
+	fmt.Printf("[minime] finished script %s for session %s\n", filepath.Base(relativeScriptPath), sessionID)
 	return nil
 }
 

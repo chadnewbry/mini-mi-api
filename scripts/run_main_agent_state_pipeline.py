@@ -129,6 +129,7 @@ def main() -> int:
     append_log(log_path, f"Input image: {input_image}")
 
     for index, state in enumerate(states, start=1):
+        append_log(log_path, f"[state-pipeline] starting state={state}")
         manifest["currentCandidateIndex"] = index
         manifest["currentStepLabel"] = f"Generating state {index} of {len(states)}: {state}"
         manifest["updatedAt"] = now_iso()
@@ -157,10 +158,17 @@ def main() -> int:
 
         generated_source = state_output_root / "main-agent" / state / "source.png"
         generated_gif = state_output_root / "main-agent" / state / "transparent-frames" / "trimmed-transparent.gif"
+        generated_static = state_output_root / "main-agent" / state / "final-static.png"
         if generated_source.exists():
             manifest["stateSourceImagePaths"] = {state: str(generated_source)}
         if generated_gif.exists():
             manifest["stateAssetPaths"] = {state: str(generated_gif)}
+            append_log(log_path, f"[state-pipeline] state={state} using animated asset {generated_gif}")
+        elif generated_static.exists():
+            manifest["stateAssetPaths"] = {state: str(generated_static)}
+            append_log(log_path, f"[state-pipeline] state={state} using static fallback asset {generated_static}")
+        else:
+            append_log(log_path, f"[state-pipeline] state={state} finished without generated asset")
         manifest["updatedAt"] = now_iso()
         manifest = merge_manifest_update(manifest_path, manifest)
         append_log(log_path, f"Finished state: {state}")
