@@ -235,7 +235,24 @@ func (g ScriptGenerator) runMainAgentScript(ctx context.Context, sessionID strin
 		command.Env = append(command.Env, "TONGUE_SPECIALIST_STATE_PIPELINE_SCRIPT="+g.StatePipelineScript)
 	}
 
-	fmt.Printf("[minime] running script %s for session %s\n", filepath.Base(relativeScriptPath), sessionID)
+	startedAt := time.Now()
+	deadline, hasDeadline := ctx.Deadline()
+	if hasDeadline {
+		fmt.Printf(
+			"[minime] running script %s for session %s (deadline=%s, workspace=%s)\n",
+			filepath.Base(relativeScriptPath),
+			sessionID,
+			deadline.Format(time.RFC3339),
+			workspaceRoot,
+		)
+	} else {
+		fmt.Printf(
+			"[minime] running script %s for session %s (workspace=%s)\n",
+			filepath.Base(relativeScriptPath),
+			sessionID,
+			workspaceRoot,
+		)
+	}
 	output, err := command.CombinedOutput()
 	trimmedOutput := strings.TrimSpace(string(output))
 	if trimmedOutput != "" {
@@ -243,11 +260,28 @@ func (g ScriptGenerator) runMainAgentScript(ctx context.Context, sessionID strin
 	}
 	if err != nil {
 		if ctx.Err() != nil {
-			return fmt.Errorf("%s timed out or was cancelled: %w\n%s", filepath.Base(relativeScriptPath), ctx.Err(), trimmedOutput)
+			return fmt.Errorf(
+				"%s timed out or was cancelled after %s: %w\n%s",
+				filepath.Base(relativeScriptPath),
+				time.Since(startedAt).Round(time.Millisecond),
+				ctx.Err(),
+				trimmedOutput,
+			)
 		}
-		return fmt.Errorf("%s failed: %w\n%s", filepath.Base(relativeScriptPath), err, trimmedOutput)
+		return fmt.Errorf(
+			"%s failed after %s: %w\n%s",
+			filepath.Base(relativeScriptPath),
+			time.Since(startedAt).Round(time.Millisecond),
+			err,
+			trimmedOutput,
+		)
 	}
-	fmt.Printf("[minime] finished script %s for session %s\n", filepath.Base(relativeScriptPath), sessionID)
+	fmt.Printf(
+		"[minime] finished script %s for session %s in %s\n",
+		filepath.Base(relativeScriptPath),
+		sessionID,
+		time.Since(startedAt).Round(time.Millisecond),
+	)
 	return nil
 }
 

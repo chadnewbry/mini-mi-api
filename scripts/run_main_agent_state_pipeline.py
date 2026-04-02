@@ -10,6 +10,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -76,7 +77,10 @@ def selected_input_image(manifest: dict[str, object]) -> Path:
 
 def run_command(command: list[str], cwd: Path, log_path: Path) -> None:
     append_log(log_path, "$ " + " ".join(command))
+    started_at = time.monotonic()
     completed = subprocess.run(command, cwd=cwd, text=True, capture_output=True, check=False)
+    duration_seconds = time.monotonic() - started_at
+    append_log(log_path, f"[state-pipeline] command exit={completed.returncode} duration={duration_seconds:.2f}s")
     if completed.stdout:
         print(completed.stdout, end="")
         append_log(log_path, completed.stdout)
@@ -127,6 +131,7 @@ def main() -> int:
     manifest = merge_manifest_update(manifest_path, manifest)
     append_log(log_path, "Starting main agent state generation.")
     append_log(log_path, f"Input image: {input_image}")
+    append_log(log_path, f"Requested states: {', '.join(states)}")
 
     for index, state in enumerate(states, start=1):
         append_log(log_path, f"[state-pipeline] starting state={state}")
@@ -159,6 +164,12 @@ def main() -> int:
         generated_source = state_output_root / "main-agent" / state / "source.png"
         generated_gif = state_output_root / "main-agent" / state / "transparent-frames" / "trimmed-transparent.gif"
         generated_static = state_output_root / "main-agent" / state / "final-static.png"
+        append_log(
+            log_path,
+            "[state-pipeline] artifact check "
+            f"state={state} source_exists={generated_source.exists()} "
+            f"gif_exists={generated_gif.exists()} static_exists={generated_static.exists()}",
+        )
         if generated_source.exists():
             manifest["stateSourceImagePaths"] = {state: str(generated_source)}
         if generated_gif.exists():

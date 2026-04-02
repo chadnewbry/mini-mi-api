@@ -10,6 +10,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 import traceback
 from pathlib import Path
 
@@ -46,6 +47,7 @@ def run_command(command: list[str], cwd: Path, dry_run: bool) -> subprocess.Comp
     print("$ " + " ".join(command), flush=True)
     if dry_run:
         return None
+    started_at = time.monotonic()
     completed = subprocess.run(
         command,
         cwd=cwd,
@@ -58,6 +60,12 @@ def run_command(command: list[str], cwd: Path, dry_run: bool) -> subprocess.Comp
         print(completed.stdout, end="", flush=True)
     if completed.stderr:
         print(completed.stderr, file=sys.stderr, end="", flush=True)
+    duration_seconds = time.monotonic() - started_at
+    log_stage(
+        "command finished "
+        f"exit={completed.returncode} duration={duration_seconds:.2f}s "
+        f"command={' '.join(command)}"
+    )
     if completed.returncode != 0:
         raise RuntimeError(
             f"command failed with exit code {completed.returncode}: {' '.join(command)}"
@@ -91,6 +99,7 @@ def main() -> int:
     for state in states:
         state_dir = args.output_root / args.specialist / state
         log_stage(f"starting state={state} mode={args.pipeline_mode}")
+        log_stage(f"state_dir={state_dir}")
         command = [
             sys.executable,
             "scripts/generate_specialist_state_video.py",
@@ -138,6 +147,8 @@ def main() -> int:
             cwd=args.repo_root,
             dry_run=args.dry_run,
         )
+        extracted_frames = sorted(state_dir.glob("frame_*.png"))
+        log_stage(f"extracted {len(extracted_frames)} frames for state={state}")
 
         background_command = [
             sys.executable,
@@ -177,6 +188,12 @@ def main() -> int:
 
         final_gif = state_dir / "transparent-frames" / "trimmed-transparent.gif"
         final_static = state_dir / "final-static.png"
+        log_stage(
+            f"artifact summary state={state} "
+            f"source_video_exists={(state_dir / 'source-video.mp4').exists()} "
+            f"source_png_exists={(state_dir / 'source.png').exists()} "
+            f"gif_exists={final_gif.exists()} static_exists={final_static.exists()}"
+        )
         if final_gif.exists():
             log_stage(f"final animated asset ready for state={state}: {final_gif}")
         elif final_static.exists():
