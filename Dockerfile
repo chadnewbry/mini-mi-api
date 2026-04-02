@@ -18,8 +18,9 @@ ENV PYTHONUNBUFFERED=1 \
     MINIME_DATA_ROOT=/data \
     MINIME_GENERATOR_MODE=script \
     MINIME_RUN_WORKERS=true \
-    MINIME_WORKER_COUNT=1 \
+    MINIME_WORKER_COUNT=4 \
     MINIME_WORKER_POLL_INTERVAL_MS=250 \
+    MINIME_JOB_TIMEOUT_SECONDS=1200 \
     UV_SYSTEM_PYTHON=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \

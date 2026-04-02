@@ -1,6 +1,7 @@
 package minime
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -54,6 +55,7 @@ type Config struct {
 	ImageGeneratorScript string
 	PythonExecutable     string
 	StatePipelineScript  string
+	JobTimeout           time.Duration
 }
 
 func LoadConfig() Config {
@@ -106,6 +108,14 @@ func LoadConfig() Config {
 		}
 	}
 
+	jobTimeout := 20 * time.Minute
+	if rawJobTimeout := strings.TrimSpace(os.Getenv("MINIME_JOB_TIMEOUT_SECONDS")); rawJobTimeout != "" {
+		parsedJobTimeout, err := strconv.Atoi(rawJobTimeout)
+		if err == nil && parsedJobTimeout > 0 {
+			jobTimeout = time.Duration(parsedJobTimeout) * time.Second
+		}
+	}
+
 	return Config{
 		Port:                 port,
 		DataRoot:             dataRoot,
@@ -118,6 +128,7 @@ func LoadConfig() Config {
 		ImageGeneratorScript: strings.TrimSpace(os.Getenv("MINIME_IMAGE_GENERATOR_SCRIPT")),
 		PythonExecutable:     strings.TrimSpace(os.Getenv("MINIME_PYTHON_EXECUTABLE")),
 		StatePipelineScript:  strings.TrimSpace(os.Getenv("MINIME_STATE_PIPELINE_SCRIPT")),
+		JobTimeout:           jobTimeout,
 	}
 }
 
@@ -541,7 +552,7 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request, session
 	workingSession := cloneSessionRecord(session)
 	s.mu.Unlock()
 
-	if err := s.generator.Bootstrap(s.generationEnvironment(), workingSession); err != nil {
+	if err := s.generator.Bootstrap(context.Background(), s.generationEnvironment(), workingSession); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -1121,13 +1132,23 @@ func (s *Server) processJob(jobID string) {
 	s.mu.Unlock()
 
 	var err error
+	jobContext := context.Background()
+	cancel := func() {}
+	if s.config.JobTimeout > 0 {
+		jobContext, cancel = context.WithTimeout(context.Background(), s.config.JobTimeout)
+	}
+	defer cancel()
 	switch jobType {
 	case "generate-candidates":
-		err = s.generator.GenerateCandidates(s.generationEnvironment(), workingSession)
+		err = s.generator.GenerateCandidates(jobContext, s.generationEnvironment(), workingSession)
 	case "generate-states":
-		err = s.generator.GenerateStates(s.generationEnvironment(), workingSession, requestedStates)
+		err = s.generator.GenerateStates(jobContext, s.generationEnvironment(), workingSession, requestedStates)
 	default:
 		err = fmt.Errorf("unsupported queued job type %q", jobType)
+	}
+
+	if errors.Is(jobContext.Err(), context.DeadlineExceeded) {
+		err = fmt.Errorf("%s job exceeded %s", jobType, s.config.JobTimeout)
 	}
 
 	s.mu.Lock()

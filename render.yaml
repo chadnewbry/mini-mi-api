@@ -22,9 +22,11 @@ services:
       - key: MINIME_RUN_WORKERS
         value: "true"
       - key: MINIME_WORKER_COUNT
-        value: "1"
+        value: "4"
       - key: MINIME_WORKER_POLL_INTERVAL_MS
         value: "250"
+      - key: MINIME_JOB_TIMEOUT_SECONDS
+        value: "1200"
       - key: MINIME_DEVICE_TOKENS
         sync: false
       - key: GEMINI_API_KEY

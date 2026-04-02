@@ -1,6 +1,7 @@
 package minime
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -9,9 +10,9 @@ import (
 var ErrNoSelectedAsset = errors.New("select a source photo or candidate before generating states")
 
 type Generator interface {
-	Bootstrap(env GenerationEnvironment, session *sessionRecord) error
-	GenerateCandidates(env GenerationEnvironment, session *sessionRecord) error
-	GenerateStates(env GenerationEnvironment, session *sessionRecord, states []string) error
+	Bootstrap(ctx context.Context, env GenerationEnvironment, session *sessionRecord) error
+	GenerateCandidates(ctx context.Context, env GenerationEnvironment, session *sessionRecord) error
+	GenerateStates(ctx context.Context, env GenerationEnvironment, session *sessionRecord, states []string) error
 }
 
 type GenerationEnvironment struct {
@@ -22,14 +23,14 @@ type GenerationEnvironment struct {
 
 type PlaceholderGenerator struct{}
 
-func (PlaceholderGenerator) Bootstrap(_ GenerationEnvironment, session *sessionRecord) error {
+func (PlaceholderGenerator) Bootstrap(_ context.Context, _ GenerationEnvironment, session *sessionRecord) error {
 	session.Status = "workspace-bootstrapped"
 	session.CurrentStepLabel = "Workspace bootstrapped"
 	session.Notes = "Backend workspace prepared."
 	return nil
 }
 
-func (PlaceholderGenerator) GenerateCandidates(env GenerationEnvironment, session *sessionRecord) error {
+func (PlaceholderGenerator) GenerateCandidates(_ context.Context, env GenerationEnvironment, session *sessionRecord) error {
 	session.Candidates = nil
 	for index, source := range session.SourcePhotos {
 		candidate, err := env.CloneAsset(
@@ -58,7 +59,7 @@ func (PlaceholderGenerator) GenerateCandidates(env GenerationEnvironment, sessio
 	return nil
 }
 
-func (PlaceholderGenerator) GenerateStates(env GenerationEnvironment, session *sessionRecord, states []string) error {
+func (PlaceholderGenerator) GenerateStates(_ context.Context, env GenerationEnvironment, session *sessionRecord, states []string) error {
 	baseAsset := findAssetByID(session.Candidates, session.SelectedCandidateID)
 	if baseAsset == nil {
 		baseAsset = findAssetByID(session.SourcePhotos, session.SelectedSourcePhotoID)

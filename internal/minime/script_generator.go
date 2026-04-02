@@ -1,6 +1,7 @@
 package minime
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -35,8 +36,9 @@ type scriptManifest struct {
 	Notes                  string            `json:"notes"`
 }
 
-func (g ScriptGenerator) Bootstrap(env GenerationEnvironment, session *sessionRecord) error {
+func (g ScriptGenerator) Bootstrap(ctx context.Context, env GenerationEnvironment, session *sessionRecord) error {
 	if err := g.runMainAgentScript(
+		ctx,
 		session.ID,
 		env,
 		filepath.Join("scripts", "bootstrap_main_agent_creation.py"),
@@ -45,7 +47,7 @@ func (g ScriptGenerator) Bootstrap(env GenerationEnvironment, session *sessionRe
 		return err
 	}
 
-	manifest, _, err := g.syncSessionToWorkspace(env, session)
+	manifest, _, err := g.syncSessionToWorkspace(ctx, env, session)
 	if err != nil {
 		return err
 	}
@@ -56,11 +58,12 @@ func (g ScriptGenerator) Bootstrap(env GenerationEnvironment, session *sessionRe
 	return nil
 }
 
-func (g ScriptGenerator) GenerateCandidates(env GenerationEnvironment, session *sessionRecord) error {
-	if _, _, err := g.syncSessionToWorkspace(env, session); err != nil {
+func (g ScriptGenerator) GenerateCandidates(ctx context.Context, env GenerationEnvironment, session *sessionRecord) error {
+	if _, _, err := g.syncSessionToWorkspace(ctx, env, session); err != nil {
 		return err
 	}
 	if err := g.runMainAgentScript(
+		ctx,
 		session.ID,
 		env,
 		filepath.Join("scripts", "generate_main_agent_candidates.py"),
@@ -107,8 +110,8 @@ func (g ScriptGenerator) GenerateCandidates(env GenerationEnvironment, session *
 	return nil
 }
 
-func (g ScriptGenerator) GenerateStates(env GenerationEnvironment, session *sessionRecord, states []string) error {
-	if _, _, err := g.syncSessionToWorkspace(env, session); err != nil {
+func (g ScriptGenerator) GenerateStates(ctx context.Context, env GenerationEnvironment, session *sessionRecord, states []string) error {
+	if _, _, err := g.syncSessionToWorkspace(ctx, env, session); err != nil {
 		return err
 	}
 
@@ -118,6 +121,7 @@ func (g ScriptGenerator) GenerateStates(env GenerationEnvironment, session *sess
 	}
 
 	if err := g.runMainAgentScript(
+		ctx,
 		session.ID,
 		env,
 		filepath.Join("scripts", "run_main_agent_state_pipeline.py"),
@@ -169,8 +173,9 @@ func (g ScriptGenerator) GenerateStates(env GenerationEnvironment, session *sess
 	return nil
 }
 
-func (g ScriptGenerator) syncSessionToWorkspace(env GenerationEnvironment, session *sessionRecord) (scriptManifest, string, error) {
+func (g ScriptGenerator) syncSessionToWorkspace(ctx context.Context, env GenerationEnvironment, session *sessionRecord) (scriptManifest, string, error) {
 	if err := g.runMainAgentScript(
+		ctx,
 		session.ID,
 		env,
 		filepath.Join("scripts", "bootstrap_main_agent_creation.py"),
@@ -200,7 +205,7 @@ func (g ScriptGenerator) syncSessionToWorkspace(env GenerationEnvironment, sessi
 	return manifest, workspaceRoot, nil
 }
 
-func (g ScriptGenerator) runMainAgentScript(sessionID string, env GenerationEnvironment, relativeScriptPath string, args []string) error {
+func (g ScriptGenerator) runMainAgentScript(ctx context.Context, sessionID string, env GenerationEnvironment, relativeScriptPath string, args []string) error {
 	pythonExecutable := g.PythonExecutable
 	if strings.TrimSpace(pythonExecutable) == "" {
 		pythonExecutable = "python3"
@@ -217,7 +222,7 @@ func (g ScriptGenerator) runMainAgentScript(sessionID string, env GenerationEnvi
 	}
 
 	commandArgs := append([]string{filepath.Join(repoRoot, relativeScriptPath)}, args...)
-	command := exec.Command(pythonExecutable, commandArgs...)
+	command := exec.CommandContext(ctx, pythonExecutable, commandArgs...)
 	command.Dir = repoRoot
 	command.Env = append(os.Environ(),
 		"TONGUE_REPO_ROOT="+repoRoot,
@@ -237,6 +242,9 @@ func (g ScriptGenerator) runMainAgentScript(sessionID string, env GenerationEnvi
 		fmt.Printf("[minime] output from %s for session %s:\n%s\n", filepath.Base(relativeScriptPath), sessionID, trimmedOutput)
 	}
 	if err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("%s timed out or was cancelled: %w\n%s", filepath.Base(relativeScriptPath), ctx.Err(), trimmedOutput)
+		}
 		return fmt.Errorf("%s failed: %w\n%s", filepath.Base(relativeScriptPath), err, trimmedOutput)
 	}
 	fmt.Printf("[minime] finished script %s for session %s\n", filepath.Base(relativeScriptPath), sessionID)

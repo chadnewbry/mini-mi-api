@@ -46,6 +46,7 @@ Default settings:
 - `MINIME_WORKER_COUNT`
 - `MINIME_RUN_WORKERS`
 - `MINIME_WORKER_POLL_INTERVAL_MS`
+- `MINIME_JOB_TIMEOUT_SECONDS`
 - `MINIME_GENERATOR_MODE`
   - supported values: `placeholder` and `script`
 - `MINIME_REPO_ROOT`
@@ -126,6 +127,7 @@ Use the included deployment files:
 - [docs/render-deployment.md](/Users/chadnewbry/dev/mini-mi-api/docs/render-deployment.md)
 
 This deploy shape runs the API and embedded workers together on one Render web service with a persistent disk.
+The hosted defaults now use `4` workers with a `20 minute` per-job timeout so one hung generation run does not block the full queue indefinitely.
 
 ## Production Reality
 

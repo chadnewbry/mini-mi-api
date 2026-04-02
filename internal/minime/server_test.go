@@ -2,6 +2,7 @@ package minime
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -32,7 +33,9 @@ type blockingGenerator struct {
 	release chan struct{}
 }
 
-func (g *recordingGenerator) Bootstrap(_ GenerationEnvironment, session *sessionRecord) error {
+type timeoutGenerator struct{}
+
+func (g *recordingGenerator) Bootstrap(_ context.Context, _ GenerationEnvironment, session *sessionRecord) error {
 	g.bootstrapCalled = true
 	session.Status = "custom-bootstrap"
 	session.CurrentStepLabel = "Custom bootstrap"
@@ -40,7 +43,7 @@ func (g *recordingGenerator) Bootstrap(_ GenerationEnvironment, session *session
 	return nil
 }
 
-func (g *recordingGenerator) GenerateCandidates(_ GenerationEnvironment, session *sessionRecord) error {
+func (g *recordingGenerator) GenerateCandidates(_ context.Context, _ GenerationEnvironment, session *sessionRecord) error {
 	g.generateCandidatesCalled = true
 	session.Status = "custom-candidates"
 	session.CurrentStepLabel = "Custom candidates"
@@ -48,7 +51,7 @@ func (g *recordingGenerator) GenerateCandidates(_ GenerationEnvironment, session
 	return nil
 }
 
-func (g *recordingGenerator) GenerateStates(_ GenerationEnvironment, session *sessionRecord, states []string) error {
+func (g *recordingGenerator) GenerateStates(_ context.Context, _ GenerationEnvironment, session *sessionRecord, states []string) error {
 	g.generateStatesCalled = true
 	session.Status = "custom-states"
 	session.CurrentStepLabel = strings.Join(states, ",")
@@ -56,23 +59,23 @@ func (g *recordingGenerator) GenerateStates(_ GenerationEnvironment, session *se
 	return nil
 }
 
-func (g *failingGenerator) Bootstrap(_ GenerationEnvironment, _ *sessionRecord) error {
+func (g *failingGenerator) Bootstrap(_ context.Context, _ GenerationEnvironment, _ *sessionRecord) error {
 	return nil
 }
 
-func (g *failingGenerator) GenerateCandidates(_ GenerationEnvironment, _ *sessionRecord) error {
+func (g *failingGenerator) GenerateCandidates(_ context.Context, _ GenerationEnvironment, _ *sessionRecord) error {
 	return g.candidateError
 }
 
-func (g *failingGenerator) GenerateStates(_ GenerationEnvironment, _ *sessionRecord, _ []string) error {
+func (g *failingGenerator) GenerateStates(_ context.Context, _ GenerationEnvironment, _ *sessionRecord, _ []string) error {
 	return g.stateError
 }
 
-func (g *blockingGenerator) Bootstrap(_ GenerationEnvironment, _ *sessionRecord) error {
+func (g *blockingGenerator) Bootstrap(_ context.Context, _ GenerationEnvironment, _ *sessionRecord) error {
 	return nil
 }
 
-func (g *blockingGenerator) GenerateCandidates(_ GenerationEnvironment, session *sessionRecord) error {
+func (g *blockingGenerator) GenerateCandidates(_ context.Context, _ GenerationEnvironment, session *sessionRecord) error {
 	close(g.started)
 	<-g.release
 	session.Status = "custom-candidates"
@@ -81,8 +84,21 @@ func (g *blockingGenerator) GenerateCandidates(_ GenerationEnvironment, session 
 	return nil
 }
 
-func (g *blockingGenerator) GenerateStates(_ GenerationEnvironment, _ *sessionRecord, _ []string) error {
+func (g *blockingGenerator) GenerateStates(_ context.Context, _ GenerationEnvironment, _ *sessionRecord, _ []string) error {
 	return nil
+}
+
+func (timeoutGenerator) Bootstrap(_ context.Context, _ GenerationEnvironment, _ *sessionRecord) error {
+	return nil
+}
+
+func (timeoutGenerator) GenerateCandidates(_ context.Context, _ GenerationEnvironment, _ *sessionRecord) error {
+	return nil
+}
+
+func (timeoutGenerator) GenerateStates(ctx context.Context, _ GenerationEnvironment, _ *sessionRecord, _ []string) error {
+	<-ctx.Done()
+	return ctx.Err()
 }
 
 func TestCreateSessionPersistsToDisk(t *testing.T) {
@@ -1402,6 +1418,69 @@ func TestGenerateStatesNormalizesAndDeduplicatesRequestedStates(t *testing.T) {
 	snapshot = fetchSessionSnapshot(t, server, created.SessionID)
 	if snapshot.CurrentStepLabel != "idle-day,working,idle-night" {
 		t.Fatalf("expected normalized deduplicated states, got %q", snapshot.CurrentStepLabel)
+	}
+}
+
+func TestQueuedStateJobFailsAfterTimeout(t *testing.T) {
+	t.Parallel()
+
+	server, err := NewServer(Config{
+		Port:         "0",
+		DataRoot:     t.TempDir(),
+		DeviceTokens: []string{"test-token"},
+		Generator:    timeoutGenerator{},
+		JobTimeout:   50 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("create server: %v", err)
+	}
+
+	createRecorder := performRequest(t, server.Handler(), http.MethodPost, "/v1/minime/sessions", `{}`)
+	var created remoteSessionSnapshot
+	decodeJSON(t, createRecorder, &created)
+
+	server.mu.Lock()
+	session := server.sessions[created.SessionID]
+	sourceAsset, err := server.persistUploadedFileLocked(created.SessionID, "source-photos", "portrait.png", "image/png", bytes.NewReader(minimalPNG))
+	if err != nil {
+		server.mu.Unlock()
+		t.Fatalf("persist source asset: %v", err)
+	}
+	session.SourcePhotos = append(session.SourcePhotos, sourceAsset)
+	session.SelectedSourcePhotoID = sourceAsset.ID
+	if err := server.persistStoreLocked(); err != nil {
+		server.mu.Unlock()
+		t.Fatalf("persist session: %v", err)
+	}
+	server.mu.Unlock()
+
+	statesRecorder := performRequest(
+		t,
+		server.Handler(),
+		http.MethodPost,
+		"/v1/minime/sessions/"+created.SessionID+"/states:generate",
+		`{"states":["idle-day"]}`,
+	)
+	if statesRecorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, statesRecorder.Code, statesRecorder.Body.String())
+	}
+
+	jobID := statesRecorder.Header().Get("X-MiniMe-Job-ID")
+	if jobID == "" {
+		t.Fatal("expected X-MiniMe-Job-ID header for state generation")
+	}
+
+	job := waitForJobTerminal(t, server, jobID)
+	if job.Status != "failed" {
+		t.Fatalf("expected failed state job after timeout, got %q", job.Status)
+	}
+	if !strings.Contains(job.Error, "exceeded") {
+		t.Fatalf("expected timeout error, got %q", job.Error)
+	}
+
+	snapshot := fetchSessionSnapshot(t, server, created.SessionID)
+	if snapshot.Status != "failed" {
+		t.Fatalf("expected failed session status after timeout, got %q", snapshot.Status)
 	}
 }
 
