@@ -12,9 +12,11 @@ import concurrent.futures
 import json
 import mimetypes
 import os
+import random
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -140,6 +142,30 @@ def write_response_image(payload: dict, destination: Path) -> None:
     download_file(image_url, destination)
 
 
+class RateLimiter:
+    """Token bucket rate limiter safe for use across threads."""
+
+    def __init__(self, per_second: float) -> None:
+        self._interval = 1.0 / per_second
+        self._lock = threading.Lock()
+        self._next_allowed = 0.0
+
+    def wait(self) -> None:
+        with self._lock:
+            now = time.monotonic()
+            if now < self._next_allowed:
+                delay = self._next_allowed - now
+                self._next_allowed += self._interval
+            else:
+                delay = 0.0
+                self._next_allowed = now + self._interval
+        if delay > 0:
+            time.sleep(delay)
+
+
+_poofbg_limiter = RateLimiter(per_second=8)
+
+
 def ensure_poofbg_api_key() -> str:
     api_key = os.environ.get("POOFBG_API_KEY", "").strip()
     if not api_key:
@@ -170,29 +196,31 @@ def remove_background_with_poofbg(api_key: str, source: Path, destination: Path)
         },
         method="POST",
     )
+    headers = {
+        "x-api-key": api_key,
+        "Content-Type": f"multipart/form-data; boundary={boundary}",
+        "Accept": "image/png",
+        "User-Agent": DEFAULT_USER_AGENT,
+    }
     max_attempts = 5
     for attempt in range(1, max_attempts + 1):
+        _poofbg_limiter.wait()
+        req = urllib.request.Request(
+            "https://api.poof.bg/v1/remove",
+            data=body,
+            headers=headers,
+            method="POST",
+        )
         try:
-            with urllib.request.urlopen(request, timeout=120) as response:
+            with urllib.request.urlopen(req, timeout=120) as response:
                 destination.write_bytes(response.read())
             return
         except urllib.error.HTTPError as error:
             detail = error.read().decode("utf-8", errors="replace")
             if error.code == 429 and attempt < max_attempts:
-                wait = 2 ** attempt
-                print(f"  rate limited, retrying in {wait}s (attempt {attempt}/{max_attempts})", flush=True)
+                wait = (2 ** attempt) + random.uniform(0, 1)
+                print(f"  rate limited, retrying in {wait:.1f}s (attempt {attempt}/{max_attempts})", flush=True)
                 time.sleep(wait)
-                request = urllib.request.Request(
-                    "https://api.poof.bg/v1/remove",
-                    data=body,
-                    headers={
-                        "x-api-key": api_key,
-                        "Content-Type": f"multipart/form-data; boundary={boundary}",
-                        "Accept": "image/png",
-                        "User-Agent": DEFAULT_USER_AGENT,
-                    },
-                    method="POST",
-                )
                 continue
             raise RuntimeError(f"poof.bg background removal failed ({error.code}): {detail}") from error
 
