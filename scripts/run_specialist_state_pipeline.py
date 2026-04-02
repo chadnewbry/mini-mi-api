@@ -86,31 +86,22 @@ def main() -> int:
             cwd=args.repo_root,
             dry_run=args.dry_run,
         )
+        for existing_frame in sorted(state_dir.glob("frame_*.png")):
+            existing_frame.unlink(missing_ok=True)
+
+        extraction_command = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(state_dir / "source-video.mp4"),
+            "-vf",
+            f"fps={args.sample_fps},scale={args.output_size}:{args.output_size}:force_original_aspect_ratio=decrease,pad={args.output_size}:{args.output_size}:(ow-iw)/2:(oh-ih)/2:color=0x00000000",
+            "-start_number",
+            "1",
+            str(state_dir / "frame_%02d.png"),
+        ]
         run_command(
-            [
-                "swift",
-                "scripts/extract_video_frames.swift",
-                "--input-video",
-                str(state_dir / "source-video.mp4"),
-                "--output-dir",
-                str(state_dir),
-                "--frame-prefix",
-                "frame",
-                "--frame-count",
-                str(args.frame_count),
-                "--start-frame",
-                str(args.start_frame),
-                "--end-frame",
-                str(args.end_frame),
-                "--sample-fps",
-                str(args.sample_fps),
-                "--output-size",
-                str(args.output_size),
-                "--frame-duration-ms",
-                str(args.frame_duration_ms),
-                "--gif-filename",
-                "trimmed.gif",
-            ],
+            extraction_command,
             cwd=args.repo_root,
             dry_run=args.dry_run,
         )

@@ -24,7 +24,7 @@ DEFAULT_USER_AGENT = "TongueApp/1.0 (+https://tongueassets.com)"
 DEFAULT_BASE_URL = "https://api.x.ai/v1"
 DEFAULT_MODEL = "grok-imagine-image"
 DEFAULT_ENGINE = "rembg"
-DEFAULT_REMBG_BIN = os.environ.get("REMBG_BIN", "/Users/chadnewbry/.venvs/rembg/bin/rembg")
+DEFAULT_REMBG_BIN = os.environ.get("REMBG_BIN", "rembg")
 DEFAULT_REMBG_MODEL = "isnet-general-use"
 DEFAULT_PROMPT = (
     "Remove the entire background and any floor shadow or drop shadow from this character frame. "

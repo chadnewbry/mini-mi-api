@@ -8,6 +8,7 @@ This repo contains:
 - the optional background worker
 - the Mini Me script-backed generation pipeline copied out of the Mac app repo
 - smoke tests and fake generators for local verification
+- a Render deployment path for the first hosted version
 
 ## Current Shape
 
@@ -77,10 +78,12 @@ The script path is repo-local now. The remaining runtime dependencies are still 
 
 - `uv`
 - Python 3
-- Swift
+- `ffmpeg`
 - the configured image generator script
 - background removal tooling such as `rembg`, if you use that branch of the pipeline
 - provider API keys such as `XAI_API_KEY`, depending on the scripts you point at
+
+The default image generator script is now [scripts/generate_image.py](/Users/chadnewbry/dev/mini-mi-api/scripts/generate_image.py), which uses `GEMINI_API_KEY`.
 
 ## Smoke Test
 
@@ -102,6 +105,18 @@ bash scripts/smoke_test_script_mode.sh
 - `GET /v1/minime/assets/{assetId}`
 
 Candidate and state generation return immediately with `X-MiniMe-Job-ID`. Clients poll `GET /v1/minime/jobs/{jobId}` and refresh the session snapshot until the job reaches `completed` or `failed`.
+
+## Hosting
+
+The best first host for the current architecture is Render, not Vercel.
+
+Use the included deployment files:
+
+- [Dockerfile](/Users/chadnewbry/dev/mini-mi-api/Dockerfile)
+- [render.yaml](/Users/chadnewbry/dev/mini-mi-api/render.yaml)
+- [docs/render-deployment.md](/Users/chadnewbry/dev/mini-mi-api/docs/render-deployment.md)
+
+This deploy shape runs the API and embedded workers together on one Render web service with a persistent disk.
 
 ## Production Reality
 

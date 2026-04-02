@@ -26,7 +26,7 @@ DEFAULT_WORKSPACE_ROOT = Path(
 GENERATOR_SCRIPT = Path(
     os.environ.get(
         "TONGUE_MAIN_AGENT_IMAGE_GENERATOR_SCRIPT",
-        "/Users/chadnewbry/.codex/skills/nano-banana-pro/scripts/generate_image.py",
+        DEFAULT_REPO_ROOT / "scripts" / "generate_image.py",
     )
 ).resolve()
 RETRY_MARKERS = ["429", "rate limit", "resource_exhausted", "unavailable", "503"]

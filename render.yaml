@@ -1,0 +1,33 @@
+services:
+  - type: web
+    name: mini-mi-api
+    runtime: docker
+    plan: starter
+    region: oregon
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /healthz
+    autoDeployTrigger: commit
+    disk:
+      name: mini-mi-data
+      mountPath: /data
+      sizeGB: 10
+    envVars:
+      - key: MINIME_PORT
+        value: "8080"
+      - key: MINIME_DATA_ROOT
+        value: /data
+      - key: MINIME_GENERATOR_MODE
+        value: script
+      - key: MINIME_RUN_WORKERS
+        value: "true"
+      - key: MINIME_WORKER_COUNT
+        value: "1"
+      - key: MINIME_WORKER_POLL_INTERVAL_MS
+        value: "250"
+      - key: MINIME_DEVICE_TOKENS
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: XAI_API_KEY
+        sync: false
