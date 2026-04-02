@@ -33,6 +33,6 @@ RUN pip install --no-cache-dir uv rembg pillow
 COPY --from=builder /out/minime-server /app/bin/minime-server
 COPY . /app
 
-EXPOSE 8080
+EXPOSE 10000
 
 CMD ["/app/bin/minime-server"]
