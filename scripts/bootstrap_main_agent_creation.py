@@ -41,8 +41,8 @@ def build_base_portrait_prompt() -> str:
         "Use a neutral default standing pose suitable for later animation. "
         "Keep both arms relaxed down by the sides in a gentle animation-ready A-pose. "
         "Show one centered character only in a true full-body head-to-toe shot with the entire person fully visible and nothing cropped. "
-        "Camera direction: keep the character almost straight-on to the viewer with only a very subtle horizontal turn, around five degrees at most. "
-        "Use a gentle downward camera pitch so the view feels nearly front-on but slightly elevated, as if the camera is tipped down just enough to sit naturally with a pedestal shot around twenty-five degrees. "
+        "Camera direction: keep the character facing straight toward the viewer with no horizontal turn or three-quarter rotation. "
+        "Use a gentle downward camera pitch of about five degrees so the view feels front-on but slightly elevated, as if the camera is tipped down just enough to sit naturally with a pedestal shot around twenty-five degrees. "
         "Avoid strong three-quarter rotation or pronounced isometric turning. "
         "Soft studio lighting, plain removable background, no text, no extra people, no animal traits, no mascot costume, no busy scene."
     )

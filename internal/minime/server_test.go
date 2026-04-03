@@ -1065,11 +1065,11 @@ func TestScriptGeneratorAppendsCandidatePromptSuffixAndCameraGuidance(t *testing
 		t.Fatalf("read generated prompt: %v", err)
 	}
 	prompt := string(promptData)
-	if !strings.Contains(prompt, "almost straight-on to the viewer") {
+	if !strings.Contains(prompt, "facing straight toward the viewer with no horizontal turn") {
 		t.Fatalf("expected updated camera guidance in prompt, got %q", prompt)
 	}
-	if !strings.Contains(prompt, "around five degrees at most") {
-		t.Fatalf("expected five-degree guidance in prompt, got %q", prompt)
+	if !strings.Contains(prompt, "downward camera pitch of about five degrees") {
+		t.Fatalf("expected five-degree downward camera guidance in prompt, got %q", prompt)
 	}
 	if !strings.Contains(prompt, "Place the character naturally on a round pedestal.") {
 		t.Fatalf("expected candidate prompt suffix in prompt, got %q", prompt)
