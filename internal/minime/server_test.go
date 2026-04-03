@@ -51,7 +51,7 @@ func (g *recordingGenerator) GenerateCandidates(_ context.Context, _ GenerationE
 	return nil
 }
 
-func (g *recordingGenerator) GenerateStates(_ context.Context, _ GenerationEnvironment, session *sessionRecord, states []string) error {
+func (g *recordingGenerator) GenerateStates(_ context.Context, _ GenerationEnvironment, session *sessionRecord, states []string, _ map[string]string) error {
 	g.generateStatesCalled = true
 	session.Status = "custom-states"
 	session.CurrentStepLabel = strings.Join(states, ",")
@@ -67,7 +67,7 @@ func (g *failingGenerator) GenerateCandidates(_ context.Context, _ GenerationEnv
 	return g.candidateError
 }
 
-func (g *failingGenerator) GenerateStates(_ context.Context, _ GenerationEnvironment, _ *sessionRecord, _ []string) error {
+func (g *failingGenerator) GenerateStates(_ context.Context, _ GenerationEnvironment, _ *sessionRecord, _ []string, _ map[string]string) error {
 	return g.stateError
 }
 
@@ -84,7 +84,7 @@ func (g *blockingGenerator) GenerateCandidates(_ context.Context, _ GenerationEn
 	return nil
 }
 
-func (g *blockingGenerator) GenerateStates(_ context.Context, _ GenerationEnvironment, _ *sessionRecord, _ []string) error {
+func (g *blockingGenerator) GenerateStates(_ context.Context, _ GenerationEnvironment, _ *sessionRecord, _ []string, _ map[string]string) error {
 	return nil
 }
 
@@ -96,7 +96,7 @@ func (timeoutGenerator) GenerateCandidates(_ context.Context, _ GenerationEnviro
 	return nil
 }
 
-func (timeoutGenerator) GenerateStates(ctx context.Context, _ GenerationEnvironment, _ *sessionRecord, _ []string) error {
+func (timeoutGenerator) GenerateStates(ctx context.Context, _ GenerationEnvironment, _ *sessionRecord, _ []string, _ map[string]string) error {
 	<-ctx.Done()
 	return ctx.Err()
 }
