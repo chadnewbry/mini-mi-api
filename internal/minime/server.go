@@ -179,17 +179,18 @@ type sessionRecord struct {
 }
 
 type jobRecord struct {
-	ID              string    `json:"id"`
-	SessionID       string    `json:"session_id"`
-	Type            string    `json:"type"`
-	Status          string    `json:"status"`
+	ID              string            `json:"id"`
+	SessionID       string            `json:"session_id"`
+	Type            string            `json:"type"`
+	Status          string            `json:"status"`
+	PromptSuffix    string            `json:"prompt_suffix,omitempty"`
 	RequestedStates []string          `json:"requested_states,omitempty"`
 	StatePrompts    map[string]string `json:"state_prompts,omitempty"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
-	FinishedAt      time.Time `json:"finished_at,omitempty"`
-	Summary         string    `json:"summary,omitempty"`
-	Error           string    `json:"error,omitempty"`
+	CreatedAt       time.Time         `json:"created_at"`
+	UpdatedAt       time.Time         `json:"updated_at"`
+	FinishedAt      time.Time         `json:"finished_at,omitempty"`
+	Summary         string            `json:"summary,omitempty"`
+	Error           string            `json:"error,omitempty"`
 }
 
 type persistedStore struct {
@@ -243,6 +244,10 @@ type remoteJobSnapshot struct {
 type selectionRequest struct {
 	SelectedSourcePhotoID string `json:"selected_source_photo_id"`
 	SelectedCandidateID   string `json:"selected_candidate_id"`
+}
+
+type candidatesGenerateRequest struct {
+	PromptSuffix string `json:"prompt_suffix"`
 }
 
 type statesGenerateRequest struct {
@@ -592,6 +597,14 @@ func (s *Server) handleGenerateCandidates(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	var request candidatesGenerateRequest
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil && !errors.Is(err, io.EOF) {
+			writeError(w, http.StatusBadRequest, "invalid candidate generation payload")
+			return
+		}
+	}
+
 	s.mu.Lock()
 	if sessionHasActiveGenerationJobLocked(s, session) {
 		s.mu.Unlock()
@@ -616,6 +629,7 @@ func (s *Server) handleGenerateCandidates(w http.ResponseWriter, r *http.Request
 	}
 
 	job := s.createQueuedJobLocked(session, "generate-candidates", nil)
+	job.PromptSuffix = strings.TrimSpace(request.PromptSuffix)
 	session.Status = "queued-candidates"
 	session.CurrentStepLabel = "Queued candidate generation"
 	session.Notes = "Candidate generation queued."
@@ -755,6 +769,7 @@ func (s *Server) handleGenerateStates(w http.ResponseWriter, r *http.Request, se
 		return
 	}
 	job := s.createQueuedJobLocked(session, "generate-states", normalizedStates)
+	job.PromptSuffix = strings.TrimSpace(request.PromptSuffix)
 	job.StatePrompts = request.StatePrompts
 	session.Status = "queued-states"
 	session.CurrentStepLabel = "Queued state generation"
@@ -831,6 +846,7 @@ func (s *Server) handleStatelessGenerateStates(w http.ResponseWriter, r *http.Re
 	session.PublishedPreview = asset
 
 	job := s.createQueuedJobLocked(session, "generate-states", normalizedStates)
+	job.PromptSuffix = strings.TrimSpace(request.PromptSuffix)
 	job.StatePrompts = request.StatePrompts
 	session.Status = "queued-states"
 	session.CurrentStepLabel = "Queued state generation"
@@ -1187,6 +1203,7 @@ func (s *Server) processJob(jobID string) {
 
 	workingSession := cloneSessionRecord(session)
 	jobType := job.Type
+	promptSuffix := job.PromptSuffix
 	requestedStates := append([]string(nil), job.RequestedStates...)
 	statePrompts := job.StatePrompts
 	job.Status = "running"
@@ -1223,9 +1240,9 @@ func (s *Server) processJob(jobID string) {
 	err = s.runGenerationExclusive(func() error {
 		switch jobType {
 		case "generate-candidates":
-			return s.generator.GenerateCandidates(jobContext, s.generationEnvironment(), workingSession)
+			return s.generator.GenerateCandidates(jobContext, s.generationEnvironment(), workingSession, promptSuffix)
 		case "generate-states":
-			return s.generator.GenerateStates(jobContext, s.generationEnvironment(), workingSession, requestedStates, statePrompts)
+			return s.generator.GenerateStates(jobContext, s.generationEnvironment(), workingSession, requestedStates, promptSuffix, statePrompts)
 		default:
 			return fmt.Errorf("unsupported queued job type %q", jobType)
 		}
@@ -1317,11 +1334,21 @@ func (s *Server) persistStoreLocked() error {
 		return fmt.Errorf("marshal store: %w", err)
 	}
 
-	tempPath := s.storePath() + ".tmp"
-	if err := os.WriteFile(tempPath, data, 0o644); err != nil {
+	storePath := s.storePath()
+	tempFile, err := os.CreateTemp(filepath.Dir(storePath), filepath.Base(storePath)+".*.tmp")
+	if err != nil {
+		return fmt.Errorf("create store temp file: %w", err)
+	}
+	tempPath := tempFile.Name()
+	defer os.Remove(tempPath)
+	if _, err := tempFile.Write(data); err != nil {
+		_ = tempFile.Close()
 		return fmt.Errorf("write store temp file: %w", err)
 	}
-	if err := os.Rename(tempPath, s.storePath()); err != nil {
+	if err := tempFile.Close(); err != nil {
+		return fmt.Errorf("close store temp file: %w", err)
+	}
+	if err := os.Rename(tempPath, storePath); err != nil {
 		return fmt.Errorf("replace store file: %w", err)
 	}
 	return nil

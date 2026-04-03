@@ -11,8 +11,8 @@ var ErrNoSelectedAsset = errors.New("select a source photo or candidate before g
 
 type Generator interface {
 	Bootstrap(ctx context.Context, env GenerationEnvironment, session *sessionRecord) error
-	GenerateCandidates(ctx context.Context, env GenerationEnvironment, session *sessionRecord) error
-	GenerateStates(ctx context.Context, env GenerationEnvironment, session *sessionRecord, states []string, statePrompts map[string]string) error
+	GenerateCandidates(ctx context.Context, env GenerationEnvironment, session *sessionRecord, promptSuffix string) error
+	GenerateStates(ctx context.Context, env GenerationEnvironment, session *sessionRecord, states []string, promptSuffix string, statePrompts map[string]string) error
 }
 
 type GenerationEnvironment struct {
@@ -30,7 +30,7 @@ func (PlaceholderGenerator) Bootstrap(_ context.Context, _ GenerationEnvironment
 	return nil
 }
 
-func (PlaceholderGenerator) GenerateCandidates(_ context.Context, env GenerationEnvironment, session *sessionRecord) error {
+func (PlaceholderGenerator) GenerateCandidates(_ context.Context, env GenerationEnvironment, session *sessionRecord, _ string) error {
 	session.Candidates = nil
 	for index, source := range session.SourcePhotos {
 		candidate, err := env.CloneAsset(
@@ -59,7 +59,7 @@ func (PlaceholderGenerator) GenerateCandidates(_ context.Context, env Generation
 	return nil
 }
 
-func (PlaceholderGenerator) GenerateStates(_ context.Context, env GenerationEnvironment, session *sessionRecord, states []string, _ map[string]string) error {
+func (PlaceholderGenerator) GenerateStates(_ context.Context, env GenerationEnvironment, session *sessionRecord, states []string, _ string, _ map[string]string) error {
 	baseAsset := findAssetByID(session.Candidates, session.SelectedCandidateID)
 	if baseAsset == nil {
 		baseAsset = findAssetByID(session.SourcePhotos, session.SelectedSourcePhotoID)

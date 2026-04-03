@@ -5,6 +5,7 @@ Generate multiple still-image candidates for Tongue's main agent avatar flow.
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import subprocess
@@ -30,6 +31,12 @@ GENERATOR_SCRIPT = Path(
     )
 ).resolve()
 RETRY_MARKERS = ["429", "rate limit", "resource_exhausted", "unavailable", "503"]
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Generate still-image candidates for Tongue's main agent.")
+    parser.add_argument("--prompt-suffix", default="", help="Optional extra prompt text appended to each candidate prompt.")
+    return parser.parse_args()
 
 
 def now_iso() -> str:
@@ -79,6 +86,7 @@ def append_log(log_path: Path, message: str) -> None:
 
 
 def main() -> int:
+    args = parse_args()
     workspace_root = DEFAULT_WORKSPACE_ROOT
     manifest_path = workspace_root / "manifest.json"
     prompt_path = workspace_root / "base-portrait-prompt.txt"
@@ -125,6 +133,8 @@ def main() -> int:
             "Keep the silhouette lean and compact rather than chubby or bulky. "
             "Keep the pose neutral and animation-ready, with arms down at the sides in a gentle A-pose."
         )
+        if args.prompt_suffix.strip():
+            candidate_prompt = f"{candidate_prompt} {args.prompt_suffix.strip()}"
         manifest["currentCandidateIndex"] = index
         manifest["currentStepLabel"] = f"Generating candidate {index} of {count}"
         manifest["updatedAt"] = now_iso()

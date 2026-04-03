@@ -43,7 +43,7 @@ func (g *recordingGenerator) Bootstrap(_ context.Context, _ GenerationEnvironmen
 	return nil
 }
 
-func (g *recordingGenerator) GenerateCandidates(_ context.Context, _ GenerationEnvironment, session *sessionRecord) error {
+func (g *recordingGenerator) GenerateCandidates(_ context.Context, _ GenerationEnvironment, session *sessionRecord, _ string) error {
 	g.generateCandidatesCalled = true
 	session.Status = "custom-candidates"
 	session.CurrentStepLabel = "Custom candidates"
@@ -51,7 +51,7 @@ func (g *recordingGenerator) GenerateCandidates(_ context.Context, _ GenerationE
 	return nil
 }
 
-func (g *recordingGenerator) GenerateStates(_ context.Context, _ GenerationEnvironment, session *sessionRecord, states []string, _ map[string]string) error {
+func (g *recordingGenerator) GenerateStates(_ context.Context, _ GenerationEnvironment, session *sessionRecord, states []string, _ string, _ map[string]string) error {
 	g.generateStatesCalled = true
 	session.Status = "custom-states"
 	session.CurrentStepLabel = strings.Join(states, ",")
@@ -63,11 +63,11 @@ func (g *failingGenerator) Bootstrap(_ context.Context, _ GenerationEnvironment,
 	return nil
 }
 
-func (g *failingGenerator) GenerateCandidates(_ context.Context, _ GenerationEnvironment, _ *sessionRecord) error {
+func (g *failingGenerator) GenerateCandidates(_ context.Context, _ GenerationEnvironment, _ *sessionRecord, _ string) error {
 	return g.candidateError
 }
 
-func (g *failingGenerator) GenerateStates(_ context.Context, _ GenerationEnvironment, _ *sessionRecord, _ []string, _ map[string]string) error {
+func (g *failingGenerator) GenerateStates(_ context.Context, _ GenerationEnvironment, _ *sessionRecord, _ []string, _ string, _ map[string]string) error {
 	return g.stateError
 }
 
@@ -75,7 +75,7 @@ func (g *blockingGenerator) Bootstrap(_ context.Context, _ GenerationEnvironment
 	return nil
 }
 
-func (g *blockingGenerator) GenerateCandidates(_ context.Context, _ GenerationEnvironment, session *sessionRecord) error {
+func (g *blockingGenerator) GenerateCandidates(_ context.Context, _ GenerationEnvironment, session *sessionRecord, _ string) error {
 	close(g.started)
 	<-g.release
 	session.Status = "custom-candidates"
@@ -84,7 +84,7 @@ func (g *blockingGenerator) GenerateCandidates(_ context.Context, _ GenerationEn
 	return nil
 }
 
-func (g *blockingGenerator) GenerateStates(_ context.Context, _ GenerationEnvironment, _ *sessionRecord, _ []string, _ map[string]string) error {
+func (g *blockingGenerator) GenerateStates(_ context.Context, _ GenerationEnvironment, _ *sessionRecord, _ []string, _ string, _ map[string]string) error {
 	return nil
 }
 
@@ -92,11 +92,11 @@ func (timeoutGenerator) Bootstrap(_ context.Context, _ GenerationEnvironment, _ 
 	return nil
 }
 
-func (timeoutGenerator) GenerateCandidates(_ context.Context, _ GenerationEnvironment, _ *sessionRecord) error {
+func (timeoutGenerator) GenerateCandidates(_ context.Context, _ GenerationEnvironment, _ *sessionRecord, _ string) error {
 	return nil
 }
 
-func (timeoutGenerator) GenerateStates(ctx context.Context, _ GenerationEnvironment, _ *sessionRecord, _ []string, _ map[string]string) error {
+func (timeoutGenerator) GenerateStates(ctx context.Context, _ GenerationEnvironment, _ *sessionRecord, _ []string, _ string, _ map[string]string) error {
 	<-ctx.Done()
 	return ctx.Err()
 }
@@ -990,6 +990,92 @@ func TestScriptGeneratorGeneratesCandidatesViaScript(t *testing.T) {
 	}
 }
 
+func TestScriptGeneratorAppendsCandidatePromptSuffixAndCameraGuidance(t *testing.T) {
+	t.Parallel()
+
+	repoRoot := findRepoRoot(t)
+	dataRoot := t.TempDir()
+	fakeGeneratorScript := writeFakeImageGeneratorScript(t)
+	server, err := NewServer(Config{
+		Port:         "0",
+		DataRoot:     dataRoot,
+		DeviceTokens: []string{"test-token"},
+		Generator: ScriptGenerator{
+			RepoRoot:             repoRoot,
+			ImageGeneratorScript: fakeGeneratorScript,
+		},
+	})
+	if err != nil {
+		t.Fatalf("create server: %v", err)
+	}
+
+	createRecorder := performRequest(t, server.Handler(), http.MethodPost, "/v1/minime/sessions", `{}`)
+	var created remoteSessionSnapshot
+	decodeJSON(t, createRecorder, &created)
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	part, err := writer.CreateFormFile("photos", "portrait.png")
+	if err != nil {
+		t.Fatalf("create multipart file: %v", err)
+	}
+	if _, err := part.Write(minimalPNG); err != nil {
+		t.Fatalf("write multipart file: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	uploadRequest := httptest.NewRequest(http.MethodPost, "/v1/minime/sessions/"+created.SessionID+"/photos", body)
+	uploadRequest.Header.Set("Authorization", "Bearer test-token")
+	uploadRequest.Header.Set("Content-Type", writer.FormDataContentType())
+	uploadRecorder := httptest.NewRecorder()
+	server.Handler().ServeHTTP(uploadRecorder, uploadRequest)
+	if uploadRecorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, uploadRecorder.Code, uploadRecorder.Body.String())
+	}
+
+	candidateRecorder := performRequest(
+		t,
+		server.Handler(),
+		http.MethodPost,
+		"/v1/minime/sessions/"+created.SessionID+"/candidates:generate",
+		`{"prompt_suffix":"Place the character naturally on a round pedestal."}`,
+	)
+	if candidateRecorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, candidateRecorder.Code, candidateRecorder.Body.String())
+	}
+	candidateJobID := candidateRecorder.Header().Get("X-MiniMe-Job-ID")
+	if candidateJobID == "" {
+		t.Fatal("expected X-MiniMe-Job-ID header for candidate generation")
+	}
+	if job := waitForJobTerminal(t, server, candidateJobID); job.Status != "completed" {
+		t.Fatalf("expected completed candidate job, got %q", job.Status)
+	}
+
+	promptPath := filepath.Join(
+		dataRoot,
+		created.SessionID,
+		"workspace",
+		"candidate-renders",
+		"main-agent-candidate-01.png.prompt.txt",
+	)
+	promptData, err := os.ReadFile(promptPath)
+	if err != nil {
+		t.Fatalf("read generated prompt: %v", err)
+	}
+	prompt := string(promptData)
+	if !strings.Contains(prompt, "almost straight-on to the viewer") {
+		t.Fatalf("expected updated camera guidance in prompt, got %q", prompt)
+	}
+	if !strings.Contains(prompt, "around five degrees at most") {
+		t.Fatalf("expected five-degree guidance in prompt, got %q", prompt)
+	}
+	if !strings.Contains(prompt, "Place the character naturally on a round pedestal.") {
+		t.Fatalf("expected candidate prompt suffix in prompt, got %q", prompt)
+	}
+}
+
 func TestScriptGeneratorGeneratesStatesViaScript(t *testing.T) {
 	t.Parallel()
 
@@ -1094,6 +1180,101 @@ func TestScriptGeneratorGeneratesStatesViaScript(t *testing.T) {
 		if finalDownloadRecorder.Code != http.StatusOK {
 			t.Fatalf("expected status %d for final asset download, got %d: %s", http.StatusOK, finalDownloadRecorder.Code, finalDownloadRecorder.Body.String())
 		}
+	}
+}
+
+func TestScriptGeneratorForwardsStatePromptSuffix(t *testing.T) {
+	t.Parallel()
+
+	repoRoot := findRepoRoot(t)
+	dataRoot := t.TempDir()
+	fakeGeneratorScript := writeFakeImageGeneratorScript(t)
+	fakeStatePipelineScript := writeFakeStatePipelineScript(t)
+	server, err := NewServer(Config{
+		Port:         "0",
+		DataRoot:     dataRoot,
+		DeviceTokens: []string{"test-token"},
+		Generator: ScriptGenerator{
+			RepoRoot:             repoRoot,
+			ImageGeneratorScript: fakeGeneratorScript,
+			StatePipelineScript:  fakeStatePipelineScript,
+		},
+	})
+	if err != nil {
+		t.Fatalf("create server: %v", err)
+	}
+
+	createRecorder := performRequest(t, server.Handler(), http.MethodPost, "/v1/minime/sessions", `{}`)
+	var created remoteSessionSnapshot
+	decodeJSON(t, createRecorder, &created)
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	part, err := writer.CreateFormFile("photos", "portrait.png")
+	if err != nil {
+		t.Fatalf("create multipart file: %v", err)
+	}
+	if _, err := part.Write(minimalPNG); err != nil {
+		t.Fatalf("write multipart file: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	uploadRequest := httptest.NewRequest(http.MethodPost, "/v1/minime/sessions/"+created.SessionID+"/photos", body)
+	uploadRequest.Header.Set("Authorization", "Bearer test-token")
+	uploadRequest.Header.Set("Content-Type", writer.FormDataContentType())
+	uploadRecorder := httptest.NewRecorder()
+	server.Handler().ServeHTTP(uploadRecorder, uploadRequest)
+	if uploadRecorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, uploadRecorder.Code, uploadRecorder.Body.String())
+	}
+
+	candidateRecorder := performRequest(t, server.Handler(), http.MethodPost, "/v1/minime/sessions/"+created.SessionID+"/candidates:generate", `{}`)
+	if candidateRecorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, candidateRecorder.Code, candidateRecorder.Body.String())
+	}
+	candidateJobID := candidateRecorder.Header().Get("X-MiniMe-Job-ID")
+	if candidateJobID == "" {
+		t.Fatal("expected X-MiniMe-Job-ID header for candidate generation")
+	}
+	if job := waitForJobTerminal(t, server, candidateJobID); job.Status != "completed" {
+		t.Fatalf("expected completed candidate job, got %q", job.Status)
+	}
+
+	statesRecorder := performRequest(
+		t,
+		server.Handler(),
+		http.MethodPost,
+		"/v1/minime/sessions/"+created.SessionID+"/states:generate",
+		`{"states":["working"],"prompt_suffix":"Keep the pedestal contact shadow subtle."}`,
+	)
+	if statesRecorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, statesRecorder.Code, statesRecorder.Body.String())
+	}
+	statesJobID := statesRecorder.Header().Get("X-MiniMe-Job-ID")
+	if statesJobID == "" {
+		t.Fatal("expected X-MiniMe-Job-ID header for state generation")
+	}
+	if job := waitForJobTerminal(t, server, statesJobID); job.Status != "completed" {
+		t.Fatalf("expected completed state job, got %q", job.Status)
+	}
+
+	suffixPath := filepath.Join(
+		dataRoot,
+		created.SessionID,
+		"workspace",
+		"state-renders",
+		"main-agent",
+		"working",
+		"prompt_suffix.txt",
+	)
+	suffixData, err := os.ReadFile(suffixPath)
+	if err != nil {
+		t.Fatalf("read forwarded state prompt suffix: %v", err)
+	}
+	if strings.TrimSpace(string(suffixData)) != "Keep the pedestal contact shadow subtle." {
+		t.Fatalf("expected forwarded state prompt suffix, got %q", string(suffixData))
 	}
 }
 
@@ -1615,10 +1796,12 @@ import sys
 
 args = sys.argv[1:]
 filename = None
+prompt = None
 for index, arg in enumerate(args):
     if arg == "--filename" and index + 1 < len(args):
         filename = args[index + 1]
-        break
+    if arg == "--prompt" and index + 1 < len(args):
+        prompt = args[index + 1]
 
 if not filename:
     raise SystemExit("missing --filename")
@@ -1626,6 +1809,8 @@ if not filename:
 output_path = pathlib.Path(filename)
 output_path.parent.mkdir(parents=True, exist_ok=True)
 output_path.write_bytes(bytes([%s]))
+if prompt is not None:
+    output_path.with_suffix(output_path.suffix + ".prompt.txt").write_text(prompt)
 print(output_path)
 `, bytesLiteral(minimalPNG))
 	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
@@ -1650,14 +1835,23 @@ def read_arg(name: str) -> str:
             return args[index + 1]
     raise SystemExit(f"missing {name}")
 
+def read_optional_arg(name: str) -> str:
+    for index, arg in enumerate(args):
+        if arg == name and index + 1 < len(args):
+            return args[index + 1]
+    return ""
+
 output_root = pathlib.Path(read_arg("--output-root"))
 state = read_arg("--state")
+prompt_suffix = read_optional_arg("--prompt-suffix")
 source_path = output_root / "main-agent" / state / "source.png"
 gif_path = output_root / "main-agent" / state / "transparent-frames" / "trimmed-transparent.gif"
 source_path.parent.mkdir(parents=True, exist_ok=True)
 gif_path.parent.mkdir(parents=True, exist_ok=True)
 source_path.write_bytes(b"\x89PNG\r\n\x1a\n")
 gif_path.write_bytes(b"GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;")
+if prompt_suffix:
+    (output_root / "main-agent" / state / "prompt_suffix.txt").write_text(prompt_suffix)
 print(gif_path)
 `
 	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {

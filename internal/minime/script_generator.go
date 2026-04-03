@@ -19,22 +19,22 @@ type ScriptGenerator struct {
 }
 
 type scriptManifest struct {
-	CreatedAt              time.Time         `json:"createdAt"`
-	UpdatedAt              time.Time         `json:"updatedAt"`
-	SourcePhotoPaths       []string          `json:"sourcePhotoPaths"`
-	CandidateImagePaths    []string          `json:"candidateImagePaths"`
-	CurrentCandidateIndex  *int              `json:"currentCandidateIndex"`
-	TotalCandidates        *int              `json:"totalCandidates"`
-	CurrentStepLabel       string            `json:"currentStepLabel"`
-	GenerationLogPath      string            `json:"generationLogPath"`
-	SelectedSourcePhotoPath string           `json:"selectedSourcePhotoPath"`
-	SelectedCandidatePath  string            `json:"selectedCandidatePath"`
-	PublishedPreviewPath   string            `json:"publishedPreviewPath"`
-	StateAssetPaths        map[string]string `json:"stateAssetPaths"`
-	StateSourceImagePaths  map[string]string `json:"stateSourceImagePaths"`
-	StatePrompts           map[string]string `json:"statePrompts,omitempty"`
-	Status                 string            `json:"status"`
-	Notes                  string            `json:"notes"`
+	CreatedAt               time.Time         `json:"createdAt"`
+	UpdatedAt               time.Time         `json:"updatedAt"`
+	SourcePhotoPaths        []string          `json:"sourcePhotoPaths"`
+	CandidateImagePaths     []string          `json:"candidateImagePaths"`
+	CurrentCandidateIndex   *int              `json:"currentCandidateIndex"`
+	TotalCandidates         *int              `json:"totalCandidates"`
+	CurrentStepLabel        string            `json:"currentStepLabel"`
+	GenerationLogPath       string            `json:"generationLogPath"`
+	SelectedSourcePhotoPath string            `json:"selectedSourcePhotoPath"`
+	SelectedCandidatePath   string            `json:"selectedCandidatePath"`
+	PublishedPreviewPath    string            `json:"publishedPreviewPath"`
+	StateAssetPaths         map[string]string `json:"stateAssetPaths"`
+	StateSourceImagePaths   map[string]string `json:"stateSourceImagePaths"`
+	StatePrompts            map[string]string `json:"statePrompts,omitempty"`
+	Status                  string            `json:"status"`
+	Notes                   string            `json:"notes"`
 }
 
 func (g ScriptGenerator) Bootstrap(ctx context.Context, env GenerationEnvironment, session *sessionRecord) error {
@@ -59,16 +59,20 @@ func (g ScriptGenerator) Bootstrap(ctx context.Context, env GenerationEnvironmen
 	return nil
 }
 
-func (g ScriptGenerator) GenerateCandidates(ctx context.Context, env GenerationEnvironment, session *sessionRecord) error {
+func (g ScriptGenerator) GenerateCandidates(ctx context.Context, env GenerationEnvironment, session *sessionRecord, promptSuffix string) error {
 	if _, _, err := g.syncSessionToWorkspace(ctx, env, session); err != nil {
 		return err
+	}
+	args := []string{}
+	if strings.TrimSpace(promptSuffix) != "" {
+		args = append(args, "--prompt-suffix", strings.TrimSpace(promptSuffix))
 	}
 	if err := g.runMainAgentScript(
 		ctx,
 		session.ID,
 		env,
 		filepath.Join("scripts", "generate_main_agent_candidates.py"),
-		nil,
+		args,
 	); err != nil {
 		return err
 	}
@@ -111,7 +115,7 @@ func (g ScriptGenerator) GenerateCandidates(ctx context.Context, env GenerationE
 	return nil
 }
 
-func (g ScriptGenerator) GenerateStates(ctx context.Context, env GenerationEnvironment, session *sessionRecord, states []string, statePrompts map[string]string) error {
+func (g ScriptGenerator) GenerateStates(ctx context.Context, env GenerationEnvironment, session *sessionRecord, states []string, promptSuffix string, statePrompts map[string]string) error {
 	if _, _, err := g.syncSessionToWorkspace(ctx, env, session, statePrompts); err != nil {
 		return err
 	}
@@ -119,6 +123,9 @@ func (g ScriptGenerator) GenerateStates(ctx context.Context, env GenerationEnvir
 	args := make([]string, 0, len(states)*2)
 	for _, state := range states {
 		args = append(args, "--state", state)
+	}
+	if strings.TrimSpace(promptSuffix) != "" {
+		args = append(args, "--prompt-suffix", strings.TrimSpace(promptSuffix))
 	}
 
 	if err := g.runMainAgentScript(
