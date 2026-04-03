@@ -138,6 +138,7 @@ type Server struct {
 
 	generator    Generator
 	workQueue    chan string
+	generationMu sync.Mutex
 	mu           sync.Mutex
 	sessions     map[string]*sessionRecord
 	assets       map[string]*assetRecord
@@ -1219,14 +1220,16 @@ func (s *Server) processJob(jobID string) {
 		jobContext, cancel = context.WithTimeout(context.Background(), s.config.JobTimeout)
 	}
 	defer cancel()
-	switch jobType {
-	case "generate-candidates":
-		err = s.generator.GenerateCandidates(jobContext, s.generationEnvironment(), workingSession)
-	case "generate-states":
-		err = s.generator.GenerateStates(jobContext, s.generationEnvironment(), workingSession, requestedStates, statePrompts)
-	default:
-		err = fmt.Errorf("unsupported queued job type %q", jobType)
-	}
+	err = s.runGenerationExclusive(func() error {
+		switch jobType {
+		case "generate-candidates":
+			return s.generator.GenerateCandidates(jobContext, s.generationEnvironment(), workingSession)
+		case "generate-states":
+			return s.generator.GenerateStates(jobContext, s.generationEnvironment(), workingSession, requestedStates, statePrompts)
+		default:
+			return fmt.Errorf("unsupported queued job type %q", jobType)
+		}
+	})
 
 	if errors.Is(jobContext.Err(), context.DeadlineExceeded) {
 		err = fmt.Errorf("%s job exceeded %s", jobType, s.config.JobTimeout)
@@ -1274,6 +1277,12 @@ func (s *Server) processJob(jobID string) {
 	}
 	workingSession.UpdatedAt = job.UpdatedAt
 	_ = s.persistStoreLocked()
+}
+
+func (s *Server) runGenerationExclusive(run func() error) error {
+	s.generationMu.Lock()
+	defer s.generationMu.Unlock()
+	return run()
 }
 
 func (s *Server) remoteAssetRecord(r *http.Request, asset *assetRecord) remoteAssetRecord {
