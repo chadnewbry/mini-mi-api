@@ -184,6 +184,8 @@ type jobRecord struct {
 	Type            string            `json:"type"`
 	Status          string            `json:"status"`
 	PromptSuffix    string            `json:"prompt_suffix,omitempty"`
+	CandidateIndex  *int              `json:"candidate_index,omitempty"`
+	CandidateCount  *int              `json:"candidate_count,omitempty"`
 	RequestedStates []string          `json:"requested_states,omitempty"`
 	StatePrompts    map[string]string `json:"state_prompts,omitempty"`
 	CreatedAt       time.Time         `json:"created_at"`
@@ -230,15 +232,16 @@ type remoteSessionSnapshot struct {
 }
 
 type remoteJobSnapshot struct {
-	JobID      string    `json:"job_id"`
-	SessionID  string    `json:"session_id"`
-	Type       string    `json:"type"`
-	Status     string    `json:"status"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
-	FinishedAt time.Time `json:"finished_at,omitempty"`
-	Summary    string    `json:"summary,omitempty"`
-	Error      string    `json:"error,omitempty"`
+	JobID          string    `json:"job_id"`
+	SessionID      string    `json:"session_id"`
+	Type           string    `json:"type"`
+	Status         string    `json:"status"`
+	CandidateIndex *int      `json:"candidate_index,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+	FinishedAt     time.Time `json:"finished_at,omitempty"`
+	Summary        string    `json:"summary,omitempty"`
+	Error          string    `json:"error,omitempty"`
 }
 
 type selectionRequest struct {
@@ -248,6 +251,12 @@ type selectionRequest struct {
 
 type candidatesGenerateRequest struct {
 	PromptSuffix string `json:"prompt_suffix"`
+}
+
+type candidateGenerateRequest struct {
+	PromptSuffix    string `json:"prompt_suffix"`
+	CandidateIndex  int    `json:"candidate_index"`
+	TotalCandidates int    `json:"total_candidates"`
 }
 
 type statesGenerateRequest struct {
@@ -423,6 +432,8 @@ func (s *Server) handleSessionRoutes(w http.ResponseWriter, r *http.Request) {
 		s.handlePhotosUpload(w, r, session)
 	case "bootstrap":
 		s.handleBootstrap(w, r, session)
+	case "candidate":
+		s.handleGenerateCandidate(w, r, session)
 	case "candidates:generate":
 		s.handleGenerateCandidates(w, r, session)
 	case "candidate-selection":
@@ -648,6 +659,79 @@ func (s *Server) handleGenerateCandidates(w http.ResponseWriter, r *http.Request
 	})
 }
 
+func (s *Server) handleGenerateCandidate(w http.ResponseWriter, r *http.Request, session *sessionRecord) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	var request candidateGenerateRequest
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil && !errors.Is(err, io.EOF) {
+			writeError(w, http.StatusBadRequest, "invalid candidate generation payload")
+			return
+		}
+	}
+	if request.CandidateIndex <= 0 {
+		writeError(w, http.StatusBadRequest, "candidate_index must be greater than zero")
+		return
+	}
+	if request.TotalCandidates <= 0 {
+		request.TotalCandidates = 4
+	}
+
+	s.mu.Lock()
+	if err := s.syncStoreLocked(); err != nil {
+		s.mu.Unlock()
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	session = s.sessions[session.ID]
+	if session == nil {
+		s.mu.Unlock()
+		writeError(w, http.StatusNotFound, "session not found")
+		return
+	}
+	if len(session.SourcePhotos) == 0 {
+		s.mu.Unlock()
+		writeError(w, http.StatusBadRequest, "import source photos before generating candidates")
+		return
+	}
+	if sessionHasActiveStateGenerationJobLocked(s, session) {
+		s.mu.Unlock()
+		writeError(w, http.StatusConflict, activeGenerationError)
+		return
+	}
+	if sessionHasQueuedOrRunningCandidateJobLocked(s, session, request.CandidateIndex) {
+		s.mu.Unlock()
+		writeError(w, http.StatusConflict, fmt.Sprintf("candidate %d is already queued or running", request.CandidateIndex))
+		return
+	}
+
+	job := s.createQueuedJobLocked(session, "generate-candidate", nil)
+	job.PromptSuffix = strings.TrimSpace(request.PromptSuffix)
+	job.CandidateIndex = &request.CandidateIndex
+	job.CandidateCount = &request.TotalCandidates
+	session.Status = "queued-candidates"
+	session.CurrentIndex = &request.CandidateIndex
+	session.TotalCount = &request.TotalCandidates
+	session.CurrentStepLabel = fmt.Sprintf("Queued candidate %d of %d", request.CandidateIndex, request.TotalCandidates)
+	session.Notes = "Candidate generation queued."
+	session.UpdatedAt = time.Now().UTC()
+	if err := s.persistStoreLocked(); err != nil {
+		s.mu.Unlock()
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	snapshot := s.snapshotForSession(r, session)
+	s.mu.Unlock()
+	s.enqueueJob(job.ID)
+
+	writeJSONWithHeader(w, http.StatusOK, snapshot, map[string]string{
+		"X-MiniMe-Job-ID": job.ID,
+	})
+}
+
 func (s *Server) handleCandidateSelection(w http.ResponseWriter, r *http.Request, session *sessionRecord) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -671,7 +755,11 @@ func (s *Server) handleCandidateSelection(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusNotFound, "session not found")
 		return
 	}
-	if sessionHasActiveGenerationJobLocked(s, session) {
+	if request.SelectedSourcePhotoID != "" && sessionHasActiveGenerationJobLocked(s, session) {
+		writeError(w, http.StatusConflict, activeGenerationError)
+		return
+	}
+	if request.SelectedCandidateID != "" && sessionHasActiveStateGenerationJobLocked(s, session) {
 		writeError(w, http.StatusConflict, activeGenerationError)
 		return
 	}
@@ -737,7 +825,7 @@ func (s *Server) handleGenerateStates(w http.ResponseWriter, r *http.Request, se
 		writeError(w, http.StatusNotFound, "session not found")
 		return
 	}
-	if sessionHasActiveGenerationJobLocked(s, session) {
+	if sessionHasActiveStateGenerationJobLocked(s, session) {
 		s.mu.Unlock()
 		writeError(w, http.StatusConflict, activeGenerationError)
 		return
@@ -1177,15 +1265,16 @@ func (s *Server) snapshotForSession(r *http.Request, session *sessionRecord) rem
 
 func (s *Server) snapshotForJob(job *jobRecord) remoteJobSnapshot {
 	return remoteJobSnapshot{
-		JobID:      job.ID,
-		SessionID:  job.SessionID,
-		Type:       job.Type,
-		Status:     job.Status,
-		CreatedAt:  job.CreatedAt,
-		UpdatedAt:  job.UpdatedAt,
-		FinishedAt: job.FinishedAt,
-		Summary:    job.Summary,
-		Error:      job.Error,
+		JobID:          job.ID,
+		SessionID:      job.SessionID,
+		Type:           job.Type,
+		Status:         job.Status,
+		CandidateIndex: job.CandidateIndex,
+		CreatedAt:      job.CreatedAt,
+		UpdatedAt:      job.UpdatedAt,
+		FinishedAt:     job.FinishedAt,
+		Summary:        job.Summary,
+		Error:          job.Error,
 	}
 }
 
@@ -1262,15 +1351,39 @@ func (s *Server) processJob(jobID string) {
 		s.mu.Unlock()
 		return
 	}
+	if sessionHasOtherRunningGenerationJobLocked(s, session, job.ID) {
+		s.mu.Unlock()
+		go func() {
+			time.Sleep(s.config.WorkerPollInterval)
+			s.enqueueJob(jobID)
+		}()
+		return
+	}
 
 	workingSession := cloneSessionRecord(session)
 	jobType := job.Type
 	promptSuffix := job.PromptSuffix
+	candidateIndex := 0
+	if job.CandidateIndex != nil {
+		candidateIndex = *job.CandidateIndex
+	}
+	candidateCount := 0
+	if job.CandidateCount != nil {
+		candidateCount = *job.CandidateCount
+	}
 	requestedStates := append([]string(nil), job.RequestedStates...)
 	statePrompts := job.StatePrompts
 	job.Status = "running"
 	job.UpdatedAt = time.Now().UTC()
 	switch jobType {
+	case "generate-candidate":
+		workingSession.CurrentIndex = job.CandidateIndex
+		workingSession.TotalCount = job.CandidateCount
+		session.Status = "generating-candidates"
+		session.CurrentIndex = job.CandidateIndex
+		session.TotalCount = job.CandidateCount
+		session.CurrentStepLabel = fmt.Sprintf("Generating candidate %d of %d", candidateIndex, candidateCount)
+		session.Notes = "Generating Mini Me candidate."
 	case "generate-candidates":
 		session.Status = "generating-candidates"
 		session.CurrentStepLabel = "Generating candidates"
@@ -1301,6 +1414,8 @@ func (s *Server) processJob(jobID string) {
 	defer cancel()
 	err = s.runGenerationExclusive(func() error {
 		switch jobType {
+		case "generate-candidate":
+			return s.generator.GenerateCandidate(jobContext, s.generationEnvironment(), workingSession, candidateIndex, candidateCount, promptSuffix)
 		case "generate-candidates":
 			return s.generator.GenerateCandidates(jobContext, s.generationEnvironment(), workingSession, promptSuffix)
 		case "generate-states":
@@ -1347,6 +1462,8 @@ func (s *Server) processJob(jobID string) {
 	workingSession.UpdatedAt = time.Now().UTC()
 	s.sessions[job.SessionID] = workingSession
 	switch jobType {
+	case "generate-candidate":
+		s.completeJobLocked(job, fmt.Sprintf("Candidate %d generated.", candidateIndex))
 	case "generate-candidates":
 		s.completeJobLocked(job, "Candidates generated.")
 	case "generate-states":
@@ -1626,10 +1743,61 @@ func sessionHasActiveGenerationJobLocked(server *Server, session *sessionRecord)
 		if job.SessionID != session.ID {
 			continue
 		}
-		if job.Type != "generate-candidates" && job.Type != "generate-states" {
+		if job.Type != "generate-candidates" && job.Type != "generate-candidate" && job.Type != "generate-states" {
 			continue
 		}
 		if job.Status == "queued" || job.Status == "running" {
+			return true
+		}
+	}
+	return false
+}
+
+func sessionHasActiveStateGenerationJobLocked(server *Server, session *sessionRecord) bool {
+	if server == nil || session == nil {
+		return false
+	}
+	for _, job := range server.jobs {
+		if job.SessionID != session.ID || job.Type != "generate-states" {
+			continue
+		}
+		if job.Status == "queued" || job.Status == "running" {
+			return true
+		}
+	}
+	return false
+}
+
+func sessionHasQueuedOrRunningCandidateJobLocked(server *Server, session *sessionRecord, candidateIndex int) bool {
+	if server == nil || session == nil {
+		return false
+	}
+	for _, job := range server.jobs {
+		if job.SessionID != session.ID || job.Type != "generate-candidate" {
+			continue
+		}
+		if job.CandidateIndex == nil || *job.CandidateIndex != candidateIndex {
+			continue
+		}
+		if job.Status == "queued" || job.Status == "running" {
+			return true
+		}
+	}
+	return false
+}
+
+func sessionHasOtherRunningGenerationJobLocked(server *Server, session *sessionRecord, excludingJobID string) bool {
+	if server == nil || session == nil {
+		return false
+	}
+	for _, job := range server.jobs {
+		if job.ID == excludingJobID || job.SessionID != session.ID {
+			continue
+		}
+		if job.Type != "generate-candidate" && job.Type != "generate-candidates" && job.Type != "generate-states" {
+			continue
+		}
+		if job.Status == "running" {
 			return true
 		}
 	}

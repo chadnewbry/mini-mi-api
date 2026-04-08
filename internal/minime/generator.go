@@ -12,6 +12,7 @@ var ErrNoSelectedAsset = errors.New("select a source photo or candidate before g
 type Generator interface {
 	Bootstrap(ctx context.Context, env GenerationEnvironment, session *sessionRecord) error
 	GenerateCandidates(ctx context.Context, env GenerationEnvironment, session *sessionRecord, promptSuffix string) error
+	GenerateCandidate(ctx context.Context, env GenerationEnvironment, session *sessionRecord, candidateIndex, totalCandidates int, promptSuffix string) error
 	GenerateStates(ctx context.Context, env GenerationEnvironment, session *sessionRecord, states []string, promptSuffix string, statePrompts map[string]string) error
 }
 
@@ -75,6 +76,52 @@ func (PlaceholderGenerator) GenerateCandidates(_ context.Context, env Generation
 	return nil
 }
 
+func (PlaceholderGenerator) GenerateCandidate(_ context.Context, env GenerationEnvironment, session *sessionRecord, candidateIndex, totalCandidates int, _ string) error {
+	if candidateIndex <= 0 {
+		return fmt.Errorf("candidate index must be positive")
+	}
+	if totalCandidates <= 0 {
+		totalCandidates = 4
+	}
+	if len(session.SourcePhotos) == 0 {
+		return fmt.Errorf("source photos are required before generating candidates")
+	}
+
+	source := session.SourcePhotos[(candidateIndex-1)%len(session.SourcePhotos)]
+	candidate, err := env.CloneAsset(
+		session.ID,
+		source,
+		"candidate-renders",
+		fmt.Sprintf("candidate-%02d%s", candidateIndex, extensionForFile(source.FileName)),
+	)
+	if err != nil {
+		return err
+	}
+
+	session.Candidates = upsertCandidateAsset(session.Candidates, candidateIndex, candidate)
+	session.CurrentIndex = &candidateIndex
+	session.TotalCount = &totalCandidates
+	if len(session.Candidates) >= totalCandidates {
+		session.Status = "candidates-generated"
+		session.CurrentStepLabel = fmt.Sprintf("Generated %d candidates.", len(session.Candidates))
+		session.Notes = "Generated placeholder candidates from uploaded source photos."
+	} else {
+		session.Status = "generating-candidates"
+		session.CurrentStepLabel = fmt.Sprintf("Generated %d of %d choices.", len(session.Candidates), totalCandidates)
+		session.Notes = "Generating placeholder candidates from uploaded source photos."
+	}
+	if session.SelectedCandidateID == "" {
+		session.SelectedCandidateID = candidate.ID
+		session.PublishedPreview = candidate
+	}
+	if env.PublishProgress != nil {
+		if err := env.PublishProgress(session); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (PlaceholderGenerator) GenerateStates(_ context.Context, env GenerationEnvironment, session *sessionRecord, states []string, _ string, _ map[string]string) error {
 	baseAsset := findAssetByID(session.Candidates, session.SelectedCandidateID)
 	if baseAsset == nil {
@@ -126,4 +173,25 @@ func (PlaceholderGenerator) GenerateStates(_ context.Context, env GenerationEnvi
 		session.PublishedPreview = baseAsset
 	}
 	return nil
+}
+
+func upsertCandidateAsset(existing []*assetRecord, candidateIndex int, asset *assetRecord) []*assetRecord {
+	slot := candidateIndex - 1
+	if slot < 0 {
+		return existing
+	}
+
+	candidates := append([]*assetRecord(nil), existing...)
+	for len(candidates) <= slot {
+		candidates = append(candidates, nil)
+	}
+	candidates[slot] = asset
+
+	trimmed := candidates[:0]
+	for _, candidate := range candidates {
+		if candidate != nil {
+			trimmed = append(trimmed, candidate)
+		}
+	}
+	return trimmed
 }

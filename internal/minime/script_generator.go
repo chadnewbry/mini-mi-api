@@ -99,6 +99,37 @@ func (g ScriptGenerator) GenerateCandidates(ctx context.Context, env GenerationE
 	return nil
 }
 
+func (g ScriptGenerator) GenerateCandidate(ctx context.Context, env GenerationEnvironment, session *sessionRecord, candidateIndex, totalCandidates int, promptSuffix string) error {
+	if _, _, err := g.syncSessionToWorkspace(ctx, env, session); err != nil {
+		return err
+	}
+
+	args := []string{
+		"--candidate-index", fmt.Sprintf("%d", candidateIndex),
+		"--candidate-count", fmt.Sprintf("%d", totalCandidates),
+	}
+	if strings.TrimSpace(promptSuffix) != "" {
+		args = append(args, "--prompt-suffix", strings.TrimSpace(promptSuffix))
+	}
+
+	if err := g.runMainAgentScript(
+		ctx,
+		session.ID,
+		env,
+		filepath.Join("scripts", "generate_main_agent_candidates.py"),
+		args,
+		nil,
+	); err != nil {
+		return err
+	}
+
+	manifest, _, err := g.readManifest(session.ID, env)
+	if err != nil {
+		return err
+	}
+	return g.applyCandidateManifest(env, session, manifest)
+}
+
 func (g ScriptGenerator) GenerateStates(ctx context.Context, env GenerationEnvironment, session *sessionRecord, states []string, promptSuffix string, statePrompts map[string]string) error {
 	if _, _, err := g.syncSessionToWorkspace(ctx, env, session, statePrompts); err != nil {
 		return err
