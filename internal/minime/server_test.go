@@ -33,6 +33,11 @@ type blockingGenerator struct {
 	release chan struct{}
 }
 
+type progressiveGenerator struct {
+	firstCandidatePublished chan struct{}
+	release                 chan struct{}
+}
+
 type timeoutGenerator struct{}
 
 func (g *recordingGenerator) Bootstrap(_ context.Context, _ GenerationEnvironment, session *sessionRecord) error {
@@ -85,6 +90,42 @@ func (g *blockingGenerator) GenerateCandidates(_ context.Context, _ GenerationEn
 }
 
 func (g *blockingGenerator) GenerateStates(_ context.Context, _ GenerationEnvironment, _ *sessionRecord, _ []string, _ string, _ map[string]string) error {
+	return nil
+}
+
+func (g *progressiveGenerator) Bootstrap(_ context.Context, _ GenerationEnvironment, _ *sessionRecord) error {
+	return nil
+}
+
+func (g *progressiveGenerator) GenerateCandidates(_ context.Context, env GenerationEnvironment, session *sessionRecord, _ string) error {
+	if len(session.SourcePhotos) == 0 {
+		return errors.New("missing source photo")
+	}
+	total := 4
+	session.TotalCount = &total
+	source := session.SourcePhotos[0]
+	firstCandidate, err := env.CloneAsset(session.ID, source, "candidate-renders", "candidate-01.png")
+	if err != nil {
+		return err
+	}
+	session.Candidates = []*assetRecord{firstCandidate}
+	current := 1
+	session.CurrentIndex = &current
+	session.Status = "generating-candidates"
+	session.CurrentStepLabel = "Generating candidate 1 of 4"
+	session.Notes = "Generated the first candidate."
+	if err := env.PublishProgress(session); err != nil {
+		return err
+	}
+	close(g.firstCandidatePublished)
+	<-g.release
+	session.Status = "candidate-generated"
+	session.CurrentStepLabel = "Candidates generated"
+	session.Notes = "Generated all candidates."
+	return nil
+}
+
+func (g *progressiveGenerator) GenerateStates(_ context.Context, _ GenerationEnvironment, _ *sessionRecord, _ []string, _ string, _ map[string]string) error {
 	return nil
 }
 
@@ -421,6 +462,71 @@ func TestUploadGenerateCandidatesAndDownloadAsset(t *testing.T) {
 	}
 	if !bytes.Equal(downloadRecorder.Body.Bytes(), minimalPNG) {
 		t.Fatal("expected downloaded asset bytes to match uploaded placeholder content")
+	}
+}
+
+func TestRunningCandidateJobPublishesPartialCandidates(t *testing.T) {
+	t.Parallel()
+
+	generator := &progressiveGenerator{
+		firstCandidatePublished: make(chan struct{}),
+		release:                 make(chan struct{}),
+	}
+	server, err := NewServer(Config{
+		Port:               "0",
+		DataRoot:           t.TempDir(),
+		DeviceTokens:       []string{"test-token"},
+		Generator:          generator,
+		RunWorkers:         true,
+		WorkerPollInterval: 10 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("create server: %v", err)
+	}
+
+	createRecorder := performRequest(t, server.Handler(), http.MethodPost, "/v1/minime/sessions", `{}`)
+	var created remoteSessionSnapshot
+	decodeJSON(t, createRecorder, &created)
+
+	uploadRecorder := uploadSourcePhoto(t, server, created.SessionID, "source.png", minimalPNG, "image/png")
+	if uploadRecorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, uploadRecorder.Code, uploadRecorder.Body.String())
+	}
+
+	candidateRecorder := performRequest(t, server.Handler(), http.MethodPost, "/v1/minime/sessions/"+created.SessionID+"/candidates:generate", `{}`)
+	if candidateRecorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, candidateRecorder.Code, candidateRecorder.Body.String())
+	}
+	jobID := candidateRecorder.Header().Get("X-MiniMe-Job-ID")
+	if jobID == "" {
+		t.Fatal("expected candidate generation job id")
+	}
+
+	select {
+	case <-generator.firstCandidatePublished:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for partial candidate progress")
+	}
+
+	session := fetchSessionSnapshot(t, server, created.SessionID)
+	if len(session.Candidates) != 1 {
+		t.Fatalf("expected 1 partial candidate, got %d", len(session.Candidates))
+	}
+	if session.Status != "generating-candidates" {
+		t.Fatalf("expected generating-candidates status, got %q", session.Status)
+	}
+	if session.CurrentStepLabel != "Generating candidate 1 of 4" {
+		t.Fatalf("expected incremental step label, got %q", session.CurrentStepLabel)
+	}
+
+	job := waitForJobStatus(t, server, jobID, "running")
+	if job.Summary != "Generating candidate 1 of 4" {
+		t.Fatalf("expected running job summary to reflect progress, got %q", job.Summary)
+	}
+
+	close(generator.release)
+	if terminalJob := waitForJobTerminal(t, server, jobID); terminalJob.Status != "completed" {
+		t.Fatalf("expected completed job, got %q", terminalJob.Status)
 	}
 }
 

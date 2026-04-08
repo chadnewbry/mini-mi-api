@@ -1,8 +1,10 @@
 package minime
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -44,6 +46,7 @@ func (g ScriptGenerator) Bootstrap(ctx context.Context, env GenerationEnvironmen
 		env,
 		filepath.Join("scripts", "bootstrap_main_agent_creation.py"),
 		nil,
+		nil,
 	); err != nil {
 		return err
 	}
@@ -73,6 +76,13 @@ func (g ScriptGenerator) GenerateCandidates(ctx context.Context, env GenerationE
 		env,
 		filepath.Join("scripts", "generate_main_agent_candidates.py"),
 		args,
+		func() error {
+			manifest, _, err := g.readManifest(session.ID, env)
+			if err != nil {
+				return nil
+			}
+			return g.applyCandidateManifest(env, session, manifest)
+		},
 	); err != nil {
 		return err
 	}
@@ -82,36 +92,10 @@ func (g ScriptGenerator) GenerateCandidates(ctx context.Context, env GenerationE
 		return err
 	}
 
-	session.Candidates = nil
-	candidateByPath := map[string]*assetRecord{}
-	for _, path := range manifest.CandidateImagePaths {
-		asset, err := env.ImportFile(session.ID, "candidate-renders", path)
-		if err != nil {
-			return err
-		}
-		session.Candidates = append(session.Candidates, asset)
-		candidateByPath[filepath.Clean(path)] = asset
+	if err := g.applyCandidateManifest(env, session, manifest); err != nil {
+		return err
 	}
-
-	if manifest.SelectedCandidatePath != "" {
-		if asset := candidateByPath[filepath.Clean(manifest.SelectedCandidatePath)]; asset != nil {
-			session.SelectedCandidateID = asset.ID
-			session.PublishedPreview = asset
-		}
-	}
-
-	if manifest.GenerationLogPath != "" && filepath.IsAbs(manifest.GenerationLogPath) {
-		if _, err := os.Stat(manifest.GenerationLogPath); err == nil {
-			_, _ = env.ImportFile(session.ID, "logs", manifest.GenerationLogPath)
-		}
-	}
-
 	_ = workspaceRoot
-	session.CurrentIndex = manifest.CurrentCandidateIndex
-	session.TotalCount = manifest.TotalCandidates
-	session.Status = manifest.Status
-	session.CurrentStepLabel = manifest.CurrentStepLabel
-	session.Notes = manifest.Notes
 	return nil
 }
 
@@ -134,6 +118,7 @@ func (g ScriptGenerator) GenerateStates(ctx context.Context, env GenerationEnvir
 		env,
 		filepath.Join("scripts", "run_main_agent_state_pipeline.py"),
 		args,
+		nil,
 	); err != nil {
 		if strings.Contains(err.Error(), ErrNoSelectedAsset.Error()) {
 			return ErrNoSelectedAsset
@@ -188,6 +173,7 @@ func (g ScriptGenerator) syncSessionToWorkspace(ctx context.Context, env Generat
 		env,
 		filepath.Join("scripts", "bootstrap_main_agent_creation.py"),
 		nil,
+		nil,
 	); err != nil {
 		return scriptManifest{}, "", err
 	}
@@ -216,7 +202,46 @@ func (g ScriptGenerator) syncSessionToWorkspace(ctx context.Context, env Generat
 	return manifest, workspaceRoot, nil
 }
 
-func (g ScriptGenerator) runMainAgentScript(ctx context.Context, sessionID string, env GenerationEnvironment, relativeScriptPath string, args []string) error {
+func (g ScriptGenerator) applyCandidateManifest(env GenerationEnvironment, session *sessionRecord, manifest scriptManifest) error {
+	session.Candidates = nil
+	candidateByPath := map[string]*assetRecord{}
+	for _, path := range manifest.CandidateImagePaths {
+		asset, err := env.ImportFile(session.ID, "candidate-renders", path)
+		if err != nil {
+			return err
+		}
+		session.Candidates = append(session.Candidates, asset)
+		candidateByPath[filepath.Clean(path)] = asset
+	}
+
+	if manifest.SelectedCandidatePath != "" {
+		if asset := candidateByPath[filepath.Clean(manifest.SelectedCandidatePath)]; asset != nil {
+			session.SelectedCandidateID = asset.ID
+			session.PublishedPreview = asset
+		}
+	}
+	if session.PublishedPreview == nil && len(session.Candidates) > 0 {
+		session.PublishedPreview = session.Candidates[0]
+	}
+
+	if manifest.GenerationLogPath != "" && filepath.IsAbs(manifest.GenerationLogPath) {
+		if _, err := os.Stat(manifest.GenerationLogPath); err == nil {
+			_, _ = env.ImportFile(session.ID, "logs", manifest.GenerationLogPath)
+		}
+	}
+
+	session.CurrentIndex = manifest.CurrentCandidateIndex
+	session.TotalCount = manifest.TotalCandidates
+	session.Status = manifest.Status
+	session.CurrentStepLabel = manifest.CurrentStepLabel
+	session.Notes = manifest.Notes
+	if env.PublishProgress != nil {
+		return env.PublishProgress(session)
+	}
+	return nil
+}
+
+func (g ScriptGenerator) runMainAgentScript(ctx context.Context, sessionID string, env GenerationEnvironment, relativeScriptPath string, args []string, progress func() error) error {
 	pythonExecutable := g.PythonExecutable
 	if strings.TrimSpace(pythonExecutable) == "" {
 		pythonExecutable = "python3"
@@ -246,6 +271,9 @@ func (g ScriptGenerator) runMainAgentScript(ctx context.Context, sessionID strin
 	if strings.TrimSpace(g.StatePipelineScript) != "" {
 		command.Env = append(command.Env, "TONGUE_SPECIALIST_STATE_PIPELINE_SCRIPT="+g.StatePipelineScript)
 	}
+	var outputBuffer bytes.Buffer
+	command.Stdout = &outputBuffer
+	command.Stderr = &outputBuffer
 
 	startedAt := time.Now()
 	deadline, hasDeadline := ctx.Deadline()
@@ -265,8 +293,71 @@ func (g ScriptGenerator) runMainAgentScript(ctx context.Context, sessionID strin
 			workspaceRoot,
 		)
 	}
-	output, err := command.CombinedOutput()
-	trimmedOutput := strings.TrimSpace(string(output))
+	if err := command.Start(); err != nil {
+		return fmt.Errorf("start %s: %w", filepath.Base(relativeScriptPath), err)
+	}
+
+	waitResult := make(chan error, 1)
+	go func() {
+		waitResult <- command.Wait()
+	}()
+
+	if progress != nil {
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case err := <-waitResult:
+				trimmedOutput := strings.TrimSpace(outputBuffer.String())
+				if progressErr := progress(); progressErr != nil {
+					return progressErr
+				}
+				if trimmedOutput != "" {
+					fmt.Printf("[minime] output from %s for session %s:\n%s\n", filepath.Base(relativeScriptPath), sessionID, trimmedOutput)
+				}
+				if err != nil {
+					if ctx.Err() != nil {
+						return fmt.Errorf(
+							"%s timed out or was cancelled after %s: %w\n%s",
+							filepath.Base(relativeScriptPath),
+							time.Since(startedAt).Round(time.Millisecond),
+							ctx.Err(),
+							trimmedOutput,
+						)
+					}
+					return fmt.Errorf(
+						"%s failed after %s: %w\n%s",
+						filepath.Base(relativeScriptPath),
+						time.Since(startedAt).Round(time.Millisecond),
+						err,
+						trimmedOutput,
+					)
+				}
+				fmt.Printf(
+					"[minime] finished script %s for session %s in %s\n",
+					filepath.Base(relativeScriptPath),
+					sessionID,
+					time.Since(startedAt).Round(time.Millisecond),
+				)
+				return nil
+			case <-ticker.C:
+				if progressErr := progress(); progressErr != nil {
+					if err := command.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+						return progressErr
+					}
+					<-waitResult
+					return progressErr
+				}
+			case <-ctx.Done():
+				if err := command.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+					return err
+				}
+			}
+		}
+	}
+
+	err = <-waitResult
+	trimmedOutput := strings.TrimSpace(outputBuffer.String())
 	if trimmedOutput != "" {
 		fmt.Printf("[minime] output from %s for session %s:\n%s\n", filepath.Base(relativeScriptPath), sessionID, trimmedOutput)
 	}

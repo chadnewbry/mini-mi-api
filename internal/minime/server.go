@@ -988,6 +988,28 @@ func (s *Server) generationEnvironment() GenerationEnvironment {
 			}
 			return asset, nil
 		},
+		PublishProgress: func(progress *sessionRecord) error {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			if err := s.syncStoreLocked(); err != nil {
+				return err
+			}
+			session := s.sessions[progress.ID]
+			if session == nil {
+				return errors.New("session not found")
+			}
+			applySessionProgressLocked(session, progress)
+			now := time.Now().UTC()
+			session.UpdatedAt = now
+			if job := s.jobs[session.LastJobID]; job != nil && job.Status == "running" {
+				job.UpdatedAt = now
+				job.Summary = strings.TrimSpace(progress.CurrentStepLabel)
+				if job.Summary == "" {
+					job.Summary = strings.TrimSpace(progress.Notes)
+				}
+			}
+			return s.persistStoreLocked()
+		},
 	}
 }
 
@@ -1000,7 +1022,47 @@ func (s *Server) importFileLocked(sessionID, subdirectory, filePath string) (*as
 
 	fileName := filepath.Base(filePath)
 	contentType := normalizeContentType("", fileName)
+	if existing := s.findImportedAssetLocked(sessionID, subdirectory, fileName); existing != nil {
+		if err := s.replaceAssetContentsLocked(existing, input); err != nil {
+			return nil, err
+		}
+		existing.ContentType = contentType
+		return existing, nil
+	}
 	return s.persistUploadedFileLocked(sessionID, subdirectory, fileName, contentType, input)
+}
+
+func (s *Server) findImportedAssetLocked(sessionID, subdirectory, fileName string) *assetRecord {
+	targetDirectory := filepath.Join(s.config.DataRoot, sessionID, subdirectory)
+	normalizedName := sanitizeFileName(fileName)
+	for _, asset := range s.assets {
+		if asset == nil || asset.SessionID != sessionID {
+			continue
+		}
+		if asset.FileName != normalizedName {
+			continue
+		}
+		if filepath.Dir(asset.FilePath) != targetDirectory {
+			continue
+		}
+		return asset
+	}
+	return nil
+}
+
+func (s *Server) replaceAssetContentsLocked(asset *assetRecord, reader io.Reader) error {
+	if asset == nil {
+		return errors.New("asset not found")
+	}
+	file, err := os.Create(asset.FilePath)
+	if err != nil {
+		return fmt.Errorf("overwrite asset file: %w", err)
+	}
+	defer file.Close()
+	if _, err := io.Copy(file, reader); err != nil {
+		return fmt.Errorf("write asset file: %w", err)
+	}
+	return nil
 }
 
 func (s *Server) createQueuedJobLocked(session *sessionRecord, jobType string, requestedStates []string) *jobRecord {
@@ -1521,6 +1583,39 @@ func cloneSessionRecord(session *sessionRecord) *sessionRecord {
 		cloned.TotalCount = &totalCount
 	}
 	return &cloned
+}
+
+func applySessionProgressLocked(session *sessionRecord, progress *sessionRecord) {
+	if session == nil || progress == nil {
+		return
+	}
+
+	session.Status = progress.Status
+	session.CurrentStepLabel = progress.CurrentStepLabel
+	session.Notes = progress.Notes
+	session.SelectedSourcePhotoID = progress.SelectedSourcePhotoID
+	session.SelectedCandidateID = progress.SelectedCandidateID
+	session.PublishedPreview = progress.PublishedPreview
+	session.CurrentIndex = nil
+	if progress.CurrentIndex != nil {
+		currentIndex := *progress.CurrentIndex
+		session.CurrentIndex = &currentIndex
+	}
+	session.TotalCount = nil
+	if progress.TotalCount != nil {
+		totalCount := *progress.TotalCount
+		session.TotalCount = &totalCount
+	}
+	session.Candidates = append([]*assetRecord(nil), progress.Candidates...)
+	session.StateAssets = map[string]*stateAssetRecord{}
+	for stateName, asset := range progress.StateAssets {
+		if asset == nil {
+			session.StateAssets[stateName] = nil
+			continue
+		}
+		copiedAsset := *asset
+		session.StateAssets[stateName] = &copiedAsset
+	}
 }
 
 func sessionHasActiveGenerationJobLocked(server *Server, session *sessionRecord) bool {

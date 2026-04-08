@@ -16,9 +16,10 @@ type Generator interface {
 }
 
 type GenerationEnvironment struct {
-	DataRoot   string
-	CloneAsset func(sessionID string, source *assetRecord, subdirectory, fileName string) (*assetRecord, error)
-	ImportFile func(sessionID, subdirectory, filePath string) (*assetRecord, error)
+	DataRoot        string
+	CloneAsset      func(sessionID string, source *assetRecord, subdirectory, fileName string) (*assetRecord, error)
+	ImportFile      func(sessionID, subdirectory, filePath string) (*assetRecord, error)
+	PublishProgress func(session *sessionRecord) error
 }
 
 type PlaceholderGenerator struct{}
@@ -32,6 +33,8 @@ func (PlaceholderGenerator) Bootstrap(_ context.Context, _ GenerationEnvironment
 
 func (PlaceholderGenerator) GenerateCandidates(_ context.Context, env GenerationEnvironment, session *sessionRecord, _ string) error {
 	session.Candidates = nil
+	total := len(session.SourcePhotos)
+	session.TotalCount = &total
 	for index, source := range session.SourcePhotos {
 		candidate, err := env.CloneAsset(
 			session.ID,
@@ -45,9 +48,17 @@ func (PlaceholderGenerator) GenerateCandidates(_ context.Context, env Generation
 		session.Candidates = append(session.Candidates, candidate)
 		current := index + 1
 		session.CurrentIndex = &current
+		session.Status = "generating-candidates"
+		session.CurrentStepLabel = fmt.Sprintf("Generating candidate %d of %d", current, total)
+		session.Notes = "Generating placeholder candidates from uploaded source photos."
+		if env.PublishProgress != nil {
+			if err := env.PublishProgress(session); err != nil {
+				return err
+			}
+		}
 	}
 
-	total := len(session.Candidates)
+	total = len(session.Candidates)
 	session.TotalCount = &total
 	session.Status = "candidate-generated"
 	session.CurrentStepLabel = "Candidates generated"
@@ -55,6 +66,11 @@ func (PlaceholderGenerator) GenerateCandidates(_ context.Context, env Generation
 	if session.SelectedCandidateID == "" && len(session.Candidates) > 0 {
 		session.SelectedCandidateID = session.Candidates[0].ID
 		session.PublishedPreview = session.Candidates[0]
+	}
+	if env.PublishProgress != nil {
+		if err := env.PublishProgress(session); err != nil {
+			return err
+		}
 	}
 	return nil
 }
