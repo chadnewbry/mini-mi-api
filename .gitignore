@@ -2,3 +2,5 @@
 .DS_Store
 .vercel/
 tmp/
+__pycache__/
+*.pyc
