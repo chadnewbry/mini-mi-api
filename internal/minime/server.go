@@ -218,9 +218,6 @@ type remoteSessionSnapshot struct {
 	CreatedAt           time.Time                `json:"created_at"`
 	UpdatedAt           time.Time                `json:"updated_at"`
 	Status              string                   `json:"status"`
-	CurrentStepLabel    string                   `json:"current_step_label,omitempty"`
-	CurrentIndex        *int                     `json:"current_index,omitempty"`
-	TotalCount          *int                     `json:"total_count,omitempty"`
 	Notes               string                   `json:"notes,omitempty"`
 	SourcePhotos        []remoteAssetRecord      `json:"source_photos"`
 	Candidates          []remoteAssetRecord      `json:"candidates"`
@@ -713,9 +710,6 @@ func (s *Server) handleGenerateCandidate(w http.ResponseWriter, r *http.Request,
 	job.CandidateIndex = &request.CandidateIndex
 	job.CandidateCount = &request.TotalCandidates
 	session.Status = "queued-candidates"
-	session.CurrentIndex = &request.CandidateIndex
-	session.TotalCount = &request.TotalCandidates
-	session.CurrentStepLabel = fmt.Sprintf("Queued candidate %d of %d", request.CandidateIndex, request.TotalCandidates)
 	session.Notes = "Candidate generation queued."
 	session.UpdatedAt = time.Now().UTC()
 	if err := s.persistStoreLocked(); err != nil {
@@ -1249,9 +1243,6 @@ func (s *Server) snapshotForSession(r *http.Request, session *sessionRecord) rem
 		CreatedAt:           session.CreatedAt,
 		UpdatedAt:           session.UpdatedAt,
 		Status:              session.Status,
-		CurrentStepLabel:    session.CurrentStepLabel,
-		CurrentIndex:        session.CurrentIndex,
-		TotalCount:          session.TotalCount,
 		Notes:               session.Notes,
 		SourcePhotos:        sourcePhotos,
 		Candidates:          candidates,
@@ -1377,12 +1368,7 @@ func (s *Server) processJob(jobID string) {
 	job.UpdatedAt = time.Now().UTC()
 	switch jobType {
 	case "generate-candidate":
-		workingSession.CurrentIndex = job.CandidateIndex
-		workingSession.TotalCount = job.CandidateCount
 		session.Status = "generating-candidates"
-		session.CurrentIndex = job.CandidateIndex
-		session.TotalCount = job.CandidateCount
-		session.CurrentStepLabel = fmt.Sprintf("Generating candidate %d of %d", candidateIndex, candidateCount)
 		session.Notes = "Generating Mini Me candidate."
 	case "generate-candidates":
 		session.Status = "generating-candidates"
