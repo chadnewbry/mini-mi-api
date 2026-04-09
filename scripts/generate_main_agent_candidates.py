@@ -36,7 +36,22 @@ RETRY_MARKERS = ["429", "rate limit", "resource_exhausted", "unavailable", "503"
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate still-image candidates for Tongue's main agent.")
     parser.add_argument("--prompt-suffix", default="", help="Optional extra prompt text appended to each candidate prompt.")
+    parser.add_argument("--candidate-index", type=int, help="Generate only the specified 1-based candidate index.")
+    parser.add_argument("--candidate-count", type=int, default=4, help="Total number of candidates expected.")
     return parser.parse_args()
+
+
+def candidate_prompt(base_prompt: str, candidate_index: int, candidate_count: int, prompt_suffix: str) -> str:
+    prompt = (
+        f"{base_prompt} Produce candidate {candidate_index} of {candidate_count}. "
+        "Vary pose and expression slightly while keeping the identity stable and the background simple. "
+        "Do not crop the character. The result must remain a true full-body head-to-toe shot with visible feet. "
+        "Keep the silhouette lean and compact rather than chubby or bulky. "
+        "Keep the pose neutral and animation-ready, with arms down at the sides in a gentle A-pose."
+    )
+    if prompt_suffix.strip():
+        prompt = f"{prompt} {prompt_suffix.strip()}"
+    return prompt
 
 
 def now_iso() -> str:
@@ -108,33 +123,31 @@ def main() -> int:
     prompt = prompt_path.read_text().strip()
     candidate_dir.mkdir(parents=True, exist_ok=True)
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_path.write_text("")
-
-    generated_paths: list[str] = []
-    count = 4
-    manifest["candidateImagePaths"] = []
-    manifest["selectedCandidatePath"] = None
-    manifest["currentCandidateIndex"] = 0
+    count = max(1, args.candidate_count)
+    generated_paths: list[str] = [
+        path for path in manifest.get("candidateImagePaths", [])
+        if isinstance(path, str) and Path(path).exists()
+    ]
+    manifest["candidateImagePaths"] = generated_paths
+    manifest["selectedCandidatePath"] = generated_paths[0] if generated_paths else None
+    manifest["currentCandidateIndex"] = args.candidate_index or 0
     manifest["totalCandidates"] = count
     manifest["currentStepLabel"] = "Preparing candidate generation"
     manifest["generationLogPath"] = str(log_path)
     manifest["updatedAt"] = now_iso()
     manifest["status"] = "generating-candidates"
     write_manifest(manifest_path, manifest)
-    append_log(log_path, "Starting main agent candidate generation.")
+    if args.candidate_index is None:
+        log_path.write_text("")
+        append_log(log_path, "Starting main agent candidate generation.")
+    else:
+        append_log(log_path, f"Starting candidate {args.candidate_index} of {count}.")
     append_log(log_path, f"Using {len(source_photo_paths)} source photos.")
 
-    for index in range(1, count + 1):
+    candidate_indexes = [args.candidate_index] if args.candidate_index else list(range(1, count + 1))
+
+    for index in candidate_indexes:
         output_path = candidate_dir / f"main-agent-candidate-{index:02d}.png"
-        candidate_prompt = (
-            f"{prompt} Produce candidate {index} of {count}. "
-            "Vary pose and expression slightly while keeping the identity stable and the background simple. "
-            "Do not crop the character. The result must remain a true full-body head-to-toe shot with visible feet. "
-            "Keep the silhouette lean and compact rather than chubby or bulky. "
-            "Keep the pose neutral and animation-ready, with arms down at the sides in a gentle A-pose."
-        )
-        if args.prompt_suffix.strip():
-            candidate_prompt = f"{candidate_prompt} {args.prompt_suffix.strip()}"
         manifest["currentCandidateIndex"] = index
         manifest["currentStepLabel"] = f"Generating candidate {index} of {count}"
         manifest["updatedAt"] = now_iso()
@@ -146,7 +159,7 @@ def main() -> int:
             "run",
             str(GENERATOR_SCRIPT),
             "--prompt",
-            candidate_prompt,
+            candidate_prompt(prompt, index, count, args.prompt_suffix),
             "--filename",
             str(output_path),
             "--resolution",
@@ -173,20 +186,35 @@ def main() -> int:
             write_manifest(manifest_path, manifest)
             return completed.returncode
 
-        generated_paths.append(str(output_path))
+        output_path_string = str(output_path)
+        generated_paths = [
+            existing_path for existing_path in generated_paths
+            if Path(existing_path).name != output_path.name
+        ]
+        generated_paths.append(output_path_string)
+        generated_paths.sort()
         manifest["candidateImagePaths"] = generated_paths
         manifest["selectedCandidatePath"] = generated_paths[0] if generated_paths else None
         manifest["updatedAt"] = now_iso()
+        manifest["status"] = "generating-candidates" if len(generated_paths) < count else "candidates-generated"
+        if len(generated_paths) < count:
+            manifest["currentStepLabel"] = f"Generated {len(generated_paths)} of {count} choices."
+        else:
+            manifest["currentStepLabel"] = f"Generated {len(generated_paths)} candidates."
         write_manifest(manifest_path, manifest)
         append_log(log_path, f"Finished candidate {index} of {count}.")
 
     manifest["candidateImagePaths"] = generated_paths
     manifest["selectedCandidatePath"] = generated_paths[0] if generated_paths else None
-    manifest["currentCandidateIndex"] = count
+    manifest["currentCandidateIndex"] = candidate_indexes[-1]
     manifest["totalCandidates"] = count
-    manifest["currentStepLabel"] = f"Generated {len(generated_paths)} candidates."
+    manifest["currentStepLabel"] = (
+        f"Generated {len(generated_paths)} candidates."
+        if len(generated_paths) >= count
+        else f"Generated {len(generated_paths)} of {count} choices."
+    )
     manifest["updatedAt"] = now_iso()
-    manifest["status"] = "candidates-generated"
+    manifest["status"] = "candidates-generated" if len(generated_paths) >= count else "generating-candidates"
     write_manifest(manifest_path, manifest)
     append_log(log_path, f"Generated {len(generated_paths)} candidates.")
     print(f"Generated {len(generated_paths)} candidates.")
