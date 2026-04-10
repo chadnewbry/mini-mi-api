@@ -45,6 +45,7 @@ def candidate_prompt(base_prompt: str, candidate_index: int, candidate_count: in
     prompt = (
         f"{base_prompt} Produce candidate {candidate_index} of {candidate_count}. "
         "Vary pose and expression slightly while keeping the identity stable and the background simple. "
+        "Keep the facial expression within a soft friendly neutral range with only minor variation around the slight closed-mouth smile. "
         "Do not crop the character. The result must remain a true full-body head-to-toe shot with visible feet. "
         "Keep the silhouette lean and compact rather than chubby or bulky. "
         "Keep the pose neutral and animation-ready, with arms down at the sides in a gentle A-pose."
