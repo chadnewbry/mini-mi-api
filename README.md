@@ -17,7 +17,7 @@ The backend currently supports:
 - Supabase-backed bearer-token auth for app clients
 - session creation, photo upload, candidate generation, selection, state generation, and asset download
 - queued background jobs with job polling
-- local-disk persistence for sessions, jobs, and generated assets
+- configurable session/job store backend: local file (default) or Postgres with optimistic concurrency
 - script-backed generation using the Mini Me Go, Python, and ffmpeg pipeline in this repo
 
 This is good enough for local development and a fast single-host deployment.
@@ -59,6 +59,13 @@ Default settings:
   - required when `MINIME_SCRIPT_RUNNER_MODE=remote`
 - `MINIME_SCRIPT_RUNNER_TOKEN`
   - optional bearer token sent to the remote script runner
+- `MINIME_STORE_BACKEND`
+  - supported values: `file` (default) and `postgres`
+- `MINIME_DATABASE_URL`
+  - Postgres DSN for `MINIME_STORE_BACKEND=postgres`
+  - if omitted, `DATABASE_URL` is used when present
+- `MINIME_STORE_TABLE`
+  - optional Postgres table name for persisted snapshot state (default: `minime_store_snapshots`)
 
 ## Split API And Worker Mode
 
@@ -160,15 +167,15 @@ with:
 
 ## Production Reality
 
-This repo is now independent, but the current storage model is still local-disk based. That means:
+This repo is now independent. Session/job state can run on local disk or Postgres:
 
 - fastest deploy path: one hosted machine or one hosted container with embedded workers
-- not yet ready for true horizontally scaled multi-instance deployment
+- for multi-instance safety, use Postgres store mode (`MINIME_STORE_BACKEND=postgres`) so writes use versioned compare-and-swap persistence
 - not a clean fit for Vercel as-is, because Vercel does not give this architecture a long-running shared process plus shared local disk
 
 If you want Vercel as the public entrypoint, the next required step is to externalize state:
 
-- Postgres for sessions and jobs
+- Postgres for sessions and jobs (now supported via `MINIME_STORE_BACKEND=postgres`)
 - object storage for uploads and generated assets
 - non-local job execution, either a separate worker service or a queue-backed runner
 

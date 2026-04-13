@@ -57,6 +57,9 @@ type Config struct {
 	ScriptRunnerMode     string
 	ScriptRunnerURL      string
 	ScriptRunnerToken    string
+	StoreBackend         string
+	DatabaseURL          string
+	StoreTable           string
 	JobTimeout           time.Duration
 	SupabaseURL          string
 	SupabaseAnonKey      string
@@ -121,6 +124,9 @@ func LoadConfig() Config {
 		ScriptRunnerMode:     strings.TrimSpace(os.Getenv("MINIME_SCRIPT_RUNNER_MODE")),
 		ScriptRunnerURL:      strings.TrimSpace(os.Getenv("MINIME_SCRIPT_RUNNER_URL")),
 		ScriptRunnerToken:    strings.TrimSpace(os.Getenv("MINIME_SCRIPT_RUNNER_TOKEN")),
+		StoreBackend:         strings.TrimSpace(os.Getenv("MINIME_STORE_BACKEND")),
+		DatabaseURL:          firstNonEmptyEnv("MINIME_DATABASE_URL", "DATABASE_URL"),
+		StoreTable:           strings.TrimSpace(os.Getenv("MINIME_STORE_TABLE")),
 		JobTimeout:           jobTimeout,
 		SupabaseURL:          strings.TrimSpace(os.Getenv("SUPABASE_URL")),
 		SupabaseAnonKey:      strings.TrimSpace(os.Getenv("SUPABASE_ANON_KEY")),
@@ -140,6 +146,8 @@ type Server struct {
 	assets       map[string]*assetRecord
 	jobs         map[string]*jobRecord
 	queuedJobIDs map[string]struct{}
+	store        storeBackend
+	storeVersion int64
 }
 
 type assetRecord struct {
@@ -275,6 +283,11 @@ func NewServer(config Config) (*Server, error) {
 		return nil, fmt.Errorf("create data root: %w", err)
 	}
 
+	store, err := storeBackendForConfig(config)
+	if err != nil {
+		return nil, err
+	}
+
 	generator, err := generatorForConfig(config)
 	if err != nil {
 		return nil, err
@@ -294,6 +307,7 @@ func NewServer(config Config) (*Server, error) {
 		assets:       map[string]*assetRecord{},
 		jobs:         map[string]*jobRecord{},
 		queuedJobIDs: map[string]struct{}{},
+		store:        store,
 	}
 	if err := server.loadPersistedStore(); err != nil {
 		return nil, err
@@ -327,6 +341,26 @@ func generatorForConfig(config Config) (Generator, error) {
 		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported generator mode %q", config.GeneratorMode)
+	}
+}
+
+func storeBackendForConfig(config Config) (storeBackend, error) {
+	mode := strings.TrimSpace(strings.ToLower(config.StoreBackend))
+	if mode == "" {
+		if strings.TrimSpace(config.DatabaseURL) != "" {
+			mode = "postgres"
+		} else {
+			mode = "file"
+		}
+	}
+
+	switch mode {
+	case "file":
+		return newFileStoreBackend(filepath.Join(config.DataRoot, "store.json")), nil
+	case "postgres":
+		return newPostgresStoreBackend(context.Background(), config.DatabaseURL, config.StoreTable)
+	default:
+		return nil, fmt.Errorf("unsupported store backend %q", config.StoreBackend)
 	}
 }
 
@@ -404,7 +438,7 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 	s.sessions[session.ID] = session
 	if err := s.persistStoreLocked(); err != nil {
 		s.mu.Unlock()
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeStorePersistError(w, err)
 		return
 	}
 	snapshot := s.snapshotForSession(r, session)
@@ -547,7 +581,7 @@ func (s *Server) handlePhotosUpload(w http.ResponseWriter, r *http.Request, sess
 	job := s.createCompletedJobLocked(session, "photos-upload", "Imported source photos.")
 
 	if err := s.persistStoreLocked(); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeStorePersistError(w, err)
 		return
 	}
 
@@ -603,7 +637,7 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request, session
 	job := s.createCompletedJobLocked(session, "bootstrap", "Workspace bootstrapped.")
 
 	if err := s.persistStoreLocked(); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeStorePersistError(w, err)
 		return
 	}
 
@@ -657,7 +691,7 @@ func (s *Server) handleGenerateCandidates(w http.ResponseWriter, r *http.Request
 	session.UpdatedAt = time.Now().UTC()
 	if err := s.persistStoreLocked(); err != nil {
 		s.mu.Unlock()
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeStorePersistError(w, err)
 		return
 	}
 	snapshot := s.snapshotForSession(r, session)
@@ -727,7 +761,7 @@ func (s *Server) handleGenerateCandidate(w http.ResponseWriter, r *http.Request,
 	session.UpdatedAt = time.Now().UTC()
 	if err := s.persistStoreLocked(); err != nil {
 		s.mu.Unlock()
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeStorePersistError(w, err)
 		return
 	}
 	snapshot := s.snapshotForSession(r, session)
@@ -800,7 +834,7 @@ func (s *Server) handleCandidateSelection(w http.ResponseWriter, r *http.Request
 	job := s.createCompletedJobLocked(session, "candidate-selection", "Updated selected Mini Me assets.")
 
 	if err := s.persistStoreLocked(); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeStorePersistError(w, err)
 		return
 	}
 
@@ -872,7 +906,7 @@ func (s *Server) handleGenerateStates(w http.ResponseWriter, r *http.Request, se
 	session.UpdatedAt = time.Now().UTC()
 	if err := s.persistStoreLocked(); err != nil {
 		s.mu.Unlock()
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeStorePersistError(w, err)
 		return
 	}
 	snapshot := s.snapshotForSession(r, session)
@@ -949,7 +983,7 @@ func (s *Server) handleStatelessGenerateStates(w http.ResponseWriter, r *http.Re
 	session.UpdatedAt = time.Now().UTC()
 	if err := s.persistStoreLocked(); err != nil {
 		s.mu.Unlock()
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeStorePersistError(w, err)
 		return
 	}
 	snapshot := s.snapshotForSession(r, session)
@@ -1397,7 +1431,11 @@ func (s *Server) processJob(jobID string) {
 	}
 	session.UpdatedAt = job.UpdatedAt
 	if err := s.persistStoreLocked(); err != nil {
-		s.failJobLocked(job, err)
+		if errors.Is(err, errStoreVersionConflict) {
+			s.failJobLocked(job, fmt.Errorf("store conflict while persisting queued job start: %w", err))
+		} else {
+			s.failJobLocked(job, err)
+		}
 		session.Status = "failed"
 		session.CurrentStepLabel = "Generation failed"
 		session.Notes = err.Error()
@@ -1515,23 +1553,11 @@ func (s *Server) persistStoreLocked() error {
 		return fmt.Errorf("marshal store: %w", err)
 	}
 
-	storePath := s.storePath()
-	tempFile, err := os.CreateTemp(filepath.Dir(storePath), filepath.Base(storePath)+".*.tmp")
+	version, err := s.store.Save(context.Background(), data, s.storeVersion)
 	if err != nil {
-		return fmt.Errorf("create store temp file: %w", err)
+		return err
 	}
-	tempPath := tempFile.Name()
-	defer os.Remove(tempPath)
-	if _, err := tempFile.Write(data); err != nil {
-		_ = tempFile.Close()
-		return fmt.Errorf("write store temp file: %w", err)
-	}
-	if err := tempFile.Close(); err != nil {
-		return fmt.Errorf("close store temp file: %w", err)
-	}
-	if err := os.Rename(tempPath, storePath); err != nil {
-		return fmt.Errorf("replace store file: %w", err)
-	}
+	s.storeVersion = version
 	return nil
 }
 
@@ -1549,17 +1575,16 @@ func (s *Server) loadPersistedStore() error {
 }
 
 func (s *Server) syncStoreLocked() error {
-	path := s.storePath()
-	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+	data, version, err := s.store.Load(context.Background())
+	if errors.Is(err, errStoreNotFound) {
 		s.sessions = map[string]*sessionRecord{}
 		s.assets = map[string]*assetRecord{}
 		s.jobs = map[string]*jobRecord{}
+		s.storeVersion = 0
 		return nil
 	}
-
-	data, err := os.ReadFile(path)
 	if err != nil {
-		return fmt.Errorf("read store file: %w", err)
+		return err
 	}
 
 	var store persistedStore
@@ -1570,6 +1595,7 @@ func (s *Server) syncStoreLocked() error {
 	s.sessions = map[string]*sessionRecord{}
 	s.assets = map[string]*assetRecord{}
 	s.jobs = map[string]*jobRecord{}
+	s.storeVersion = version
 	for _, session := range store.Sessions {
 		if session.StateAssets == nil {
 			session.StateAssets = map[string]*stateAssetRecord{}
@@ -1609,8 +1635,22 @@ func (s *Server) recoverInterruptedJobs() {
 	}
 }
 
-func (s *Server) storePath() string {
-	return filepath.Join(s.config.DataRoot, "store.json")
+func writeStorePersistError(w http.ResponseWriter, err error) {
+	if errors.Is(err, errStoreVersionConflict) {
+		writeError(w, http.StatusConflict, "store changed concurrently; retry request")
+		return
+	}
+	writeError(w, http.StatusInternalServerError, err.Error())
+}
+
+func firstNonEmptyEnv(keys ...string) string {
+	for _, key := range keys {
+		value := strings.TrimSpace(os.Getenv(key))
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func absoluteURL(r *http.Request, path string) string {
