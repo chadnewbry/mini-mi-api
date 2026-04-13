@@ -42,10 +42,11 @@ That gets you:
 If you want to force Vercel to be the actual hosted API for this backend, the required changes are:
 
 1. Replace `store.json` with Postgres (`MINIME_STORE_BACKEND=postgres`).
-2. Replace local asset files with object storage.
-3. Replace local job polling with queue-backed job execution.
-4. Remove any assumption that the API process owns the worker lifecycle.
-5. Convert the HTTP surface into Vercel function entrypoints.
+2. Replace local job polling with queue-backed job execution.
+3. Remove any assumption that the API process owns the worker lifecycle.
+4. Convert the HTTP surface into Vercel function entrypoints.
+
+Note: object storage is now supported with `MINIME_ASSET_BACKEND=s3`; uploaded/generated assets can be stored in S3-compatible storage and served via signed URLs.
 
 ## Recommendation
 

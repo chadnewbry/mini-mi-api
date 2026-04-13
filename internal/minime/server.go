@@ -60,6 +60,18 @@ type Config struct {
 	StoreBackend         string
 	DatabaseURL          string
 	StoreTable           string
+	AssetBackend         string
+	AssetBucket          string
+	AssetRegion          string
+	AssetEndpoint        string
+	AssetAccessKeyID     string
+	AssetSecretAccessKey string
+	AssetSessionToken    string
+	AssetForcePathStyle  bool
+	AssetKeyPrefix       string
+	AssetSignedURLTTL    time.Duration
+	AssetObjectTagging   string
+	AssetStorage         assetStorage
 	JobTimeout           time.Duration
 	SupabaseURL          string
 	SupabaseAnonKey      string
@@ -110,6 +122,14 @@ func LoadConfig() Config {
 		}
 	}
 
+	assetSignedURLTTL := 15 * time.Minute
+	if rawSignedURLTTL := strings.TrimSpace(os.Getenv("MINIME_ASSET_SIGNED_URL_TTL_SECONDS")); rawSignedURLTTL != "" {
+		parsedSignedURLTTL, err := strconv.Atoi(rawSignedURLTTL)
+		if err == nil && parsedSignedURLTTL > 0 {
+			assetSignedURLTTL = time.Duration(parsedSignedURLTTL) * time.Second
+		}
+	}
+
 	return Config{
 		Port:                 port,
 		DataRoot:             dataRoot,
@@ -127,6 +147,17 @@ func LoadConfig() Config {
 		StoreBackend:         strings.TrimSpace(os.Getenv("MINIME_STORE_BACKEND")),
 		DatabaseURL:          firstNonEmptyEnv("MINIME_DATABASE_URL", "DATABASE_URL"),
 		StoreTable:           strings.TrimSpace(os.Getenv("MINIME_STORE_TABLE")),
+		AssetBackend:         strings.TrimSpace(os.Getenv("MINIME_ASSET_BACKEND")),
+		AssetBucket:          strings.TrimSpace(os.Getenv("MINIME_ASSET_BUCKET")),
+		AssetRegion:          strings.TrimSpace(os.Getenv("MINIME_ASSET_REGION")),
+		AssetEndpoint:        strings.TrimSpace(os.Getenv("MINIME_ASSET_ENDPOINT")),
+		AssetAccessKeyID:     strings.TrimSpace(os.Getenv("MINIME_ASSET_ACCESS_KEY_ID")),
+		AssetSecretAccessKey: strings.TrimSpace(os.Getenv("MINIME_ASSET_SECRET_ACCESS_KEY")),
+		AssetSessionToken:    strings.TrimSpace(os.Getenv("MINIME_ASSET_SESSION_TOKEN")),
+		AssetForcePathStyle:  parseBoolEnv("MINIME_ASSET_FORCE_PATH_STYLE"),
+		AssetKeyPrefix:       strings.TrimSpace(os.Getenv("MINIME_ASSET_KEY_PREFIX")),
+		AssetSignedURLTTL:    assetSignedURLTTL,
+		AssetObjectTagging:   strings.TrimSpace(os.Getenv("MINIME_ASSET_OBJECT_TAGGING")),
 		JobTimeout:           jobTimeout,
 		SupabaseURL:          strings.TrimSpace(os.Getenv("SUPABASE_URL")),
 		SupabaseAnonKey:      strings.TrimSpace(os.Getenv("SUPABASE_ANON_KEY")),
@@ -147,6 +178,7 @@ type Server struct {
 	jobs         map[string]*jobRecord
 	queuedJobIDs map[string]struct{}
 	store        storeBackend
+	assetStorage assetStorage
 	storeVersion int64
 }
 
@@ -156,6 +188,8 @@ type assetRecord struct {
 	FileName    string `json:"file_name"`
 	ContentType string `json:"content_type"`
 	FilePath    string `json:"file_path"`
+	StorageKey  string `json:"storage_key,omitempty"`
+	StorageMode string `json:"storage_mode,omitempty"`
 }
 
 type stateAssetRecord struct {
@@ -287,6 +321,10 @@ func NewServer(config Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	assetStorage, err := assetStorageForConfig(config)
+	if err != nil {
+		return nil, err
+	}
 
 	generator, err := generatorForConfig(config)
 	if err != nil {
@@ -308,6 +346,7 @@ func NewServer(config Config) (*Server, error) {
 		jobs:         map[string]*jobRecord{},
 		queuedJobIDs: map[string]struct{}{},
 		store:        store,
+		assetStorage: assetStorage,
 	}
 	if err := server.loadPersistedStore(); err != nil {
 		return nil, err
@@ -1025,6 +1064,15 @@ func (s *Server) handleAssetDownload(w http.ResponseWriter, r *http.Request) {
 	} else {
 		w.Header().Set("Content-Type", mime.TypeByExtension(filepath.Ext(asset.FileName)))
 	}
+	if strings.EqualFold(asset.StorageMode, "s3") {
+		downloadURL, err := s.signedAssetDownloadURL(asset)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		http.Redirect(w, r, downloadURL, http.StatusTemporaryRedirect)
+		return
+	}
 	http.ServeFile(w, r, asset.FilePath)
 }
 
@@ -1053,6 +1101,20 @@ func (s *Server) persistUploadedFileLocked(sessionID, subdirectory, fileName, co
 		asset.FileName = "upload.bin"
 	}
 
+	if s.assetStorage != nil {
+		payload, err := io.ReadAll(reader)
+		if err != nil {
+			return nil, fmt.Errorf("read asset payload: %w", err)
+		}
+		asset.StorageMode = "s3"
+		asset.StorageKey = assetStorageKey(sessionID, subdirectory, asset.ID, asset.FileName)
+		if err := s.assetStorage.PutObject(context.Background(), asset.StorageKey, asset.ContentType, payload); err != nil {
+			return nil, err
+		}
+		s.assets[asset.ID] = asset
+		return asset, nil
+	}
+
 	directory := filepath.Join(s.config.DataRoot, sessionID, subdirectory)
 	if err := os.MkdirAll(directory, 0o755); err != nil {
 		return nil, fmt.Errorf("create asset directory: %w", err)
@@ -1075,9 +1137,9 @@ func (s *Server) persistUploadedFileLocked(sessionID, subdirectory, fileName, co
 }
 
 func (s *Server) cloneAssetLocked(sessionID string, source *assetRecord, subdirectory, fileName string) (*assetRecord, error) {
-	input, err := os.Open(source.FilePath)
+	input, err := s.openAssetLocked(source)
 	if err != nil {
-		return nil, fmt.Errorf("open source asset: %w", err)
+		return nil, err
 	}
 	defer input.Close()
 
@@ -1182,6 +1244,19 @@ func (s *Server) findImportedAssetLocked(sessionID, subdirectory, fileName strin
 func (s *Server) replaceAssetContentsLocked(asset *assetRecord, reader io.Reader) error {
 	if asset == nil {
 		return errors.New("asset not found")
+	}
+	if strings.EqualFold(asset.StorageMode, "s3") {
+		if s.assetStorage == nil {
+			return errors.New("asset storage backend is unavailable")
+		}
+		payload, err := io.ReadAll(reader)
+		if err != nil {
+			return fmt.Errorf("read replacement asset payload: %w", err)
+		}
+		if err := s.assetStorage.PutObject(context.Background(), asset.StorageKey, asset.ContentType, payload); err != nil {
+			return err
+		}
+		return nil
 	}
 	file, err := os.Create(asset.FilePath)
 	if err != nil {
@@ -1525,11 +1600,46 @@ func (s *Server) remoteAssetRecord(r *http.Request, asset *assetRecord) remoteAs
 	if asset == nil {
 		return remoteAssetRecord{}
 	}
+	downloadURL := absoluteURL(r, "/v1/minime/assets/"+asset.ID)
+	if strings.EqualFold(asset.StorageMode, "s3") {
+		signedURL, err := s.signedAssetDownloadURL(asset)
+		if err == nil && signedURL != "" {
+			downloadURL = signedURL
+		}
+	}
 	return remoteAssetRecord{
 		ID:          asset.ID,
 		Filename:    asset.FileName,
-		DownloadURL: absoluteURL(r, "/v1/minime/assets/"+asset.ID),
+		DownloadURL: downloadURL,
 	}
+}
+
+func (s *Server) openAssetLocked(asset *assetRecord) (io.ReadCloser, error) {
+	if asset == nil {
+		return nil, errors.New("asset not found")
+	}
+	if strings.EqualFold(asset.StorageMode, "s3") {
+		if s.assetStorage == nil {
+			return nil, errors.New("asset storage backend is unavailable")
+		}
+		body, err := s.assetStorage.GetObject(context.Background(), asset.StorageKey)
+		if err != nil {
+			return nil, err
+		}
+		return body, nil
+	}
+	input, err := os.Open(asset.FilePath)
+	if err != nil {
+		return nil, fmt.Errorf("open source asset: %w", err)
+	}
+	return input, nil
+}
+
+func (s *Server) signedAssetDownloadURL(asset *assetRecord) (string, error) {
+	if s.assetStorage == nil {
+		return "", errors.New("asset storage backend is unavailable")
+	}
+	return s.assetStorage.SignedGetURL(context.Background(), asset.StorageKey, asset.FileName, s.config.AssetSignedURLTTL)
 }
 
 func (s *Server) persistStoreLocked() error {
@@ -1651,6 +1761,22 @@ func firstNonEmptyEnv(keys ...string) string {
 		}
 	}
 	return ""
+}
+
+func parseBoolEnv(key string) bool {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return false
+	}
+	return value == "1" || strings.EqualFold(value, "true") || strings.EqualFold(value, "yes")
+}
+
+func assetStorageKey(sessionID, subdirectory, assetID, fileName string) string {
+	return strings.Trim(strings.Join([]string{
+		sanitizeFileName(sessionID),
+		sanitizeFileName(subdirectory),
+		sanitizeFileName(assetID + "-" + fileName),
+	}, "/"), "/")
 }
 
 func absoluteURL(r *http.Request, path string) string {

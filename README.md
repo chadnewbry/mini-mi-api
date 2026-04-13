@@ -66,6 +66,25 @@ Default settings:
   - if omitted, `DATABASE_URL` is used when present
 - `MINIME_STORE_TABLE`
   - optional Postgres table name for persisted snapshot state (default: `minime_store_snapshots`)
+- `MINIME_ASSET_BACKEND`
+  - supported values: `file` (default) and `s3`
+- `MINIME_ASSET_BUCKET`
+  - required when `MINIME_ASSET_BACKEND=s3`
+- `MINIME_ASSET_REGION`
+  - optional region for S3-compatible storage (default: `us-east-1`)
+- `MINIME_ASSET_ENDPOINT`
+  - optional custom S3-compatible endpoint (for example MinIO or R2)
+- `MINIME_ASSET_ACCESS_KEY_ID`
+- `MINIME_ASSET_SECRET_ACCESS_KEY`
+- `MINIME_ASSET_SESSION_TOKEN`
+- `MINIME_ASSET_FORCE_PATH_STYLE`
+  - optional (`true`/`false`), useful for local S3-compatible providers
+- `MINIME_ASSET_KEY_PREFIX`
+  - optional object key prefix
+- `MINIME_ASSET_SIGNED_URL_TTL_SECONDS`
+  - optional signed download URL TTL (default: `900`)
+- `MINIME_ASSET_OBJECT_TAGGING`
+  - optional URL-encoded object tags (for lifecycle policy filters), for example `ttl=30d&app=minime`
 
 ## Split API And Worker Mode
 
@@ -143,6 +162,8 @@ bash scripts/test_hosted_backend.sh
 
 Candidate and state generation return immediately with `X-MiniMe-Job-ID`. Clients poll `GET /v1/minime/jobs/{jobId}` and refresh the session snapshot until the job reaches `completed` or `failed`.
 
+When `MINIME_ASSET_BACKEND=s3`, session snapshot `download_url` fields are signed object-storage URLs and no longer point at `/v1/minime/assets/{assetId}`.
+
 ## Hosting
 
 The best first host for the current architecture is Render, not Vercel.
@@ -173,10 +194,10 @@ This repo is now independent. Session/job state can run on local disk or Postgre
 - for multi-instance safety, use Postgres store mode (`MINIME_STORE_BACKEND=postgres`) so writes use versioned compare-and-swap persistence
 - not a clean fit for Vercel as-is, because Vercel does not give this architecture a long-running shared process plus shared local disk
 
-If you want Vercel as the public entrypoint, the next required step is to externalize state:
+If you want Vercel as the public entrypoint, the remaining required step is to externalize job execution:
 
 - Postgres for sessions and jobs (now supported via `MINIME_STORE_BACKEND=postgres`)
-- object storage for uploads and generated assets
+- object storage for uploads and generated assets (now supported via `MINIME_ASSET_BACKEND=s3`)
 - non-local job execution, either a separate worker service or a queue-backed runner
 
 That work is outlined in [docs/vercel-deployment.md](/Users/chadnewbry/dev/mini-mi-api/docs/vercel-deployment.md).
