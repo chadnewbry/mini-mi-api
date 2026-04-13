@@ -53,6 +53,12 @@ Default settings:
 - `MINIME_IMAGE_GENERATOR_SCRIPT`
 - `MINIME_PYTHON_EXECUTABLE`
 - `MINIME_STATE_PIPELINE_SCRIPT`
+- `MINIME_SCRIPT_RUNNER_MODE`
+  - supported values: `local` (default) and `remote`
+- `MINIME_SCRIPT_RUNNER_URL`
+  - required when `MINIME_SCRIPT_RUNNER_MODE=remote`
+- `MINIME_SCRIPT_RUNNER_TOKEN`
+  - optional bearer token sent to the remote script runner
 
 ## Split API And Worker Mode
 
@@ -85,6 +91,20 @@ The script path is repo-local now. The remaining runtime dependencies are still 
 - provider API keys such as `XAI_API_KEY`, depending on the scripts you point at
 
 The default image generator script is now [scripts/generate_image.py](/Users/chadnewbry/dev/mini-mi-api/scripts/generate_image.py), which uses `GEMINI_API_KEY`.
+
+### Remote Script Runner Mode
+
+Set `MINIME_SCRIPT_RUNNER_MODE=remote` to dispatch script execution to Tongue API:
+
+```bash
+MINIME_GENERATOR_MODE=script \
+MINIME_SCRIPT_RUNNER_MODE=remote \
+MINIME_SCRIPT_RUNNER_URL=http://localhost:8080 \
+MINIME_SCRIPT_RUNNER_TOKEN=dev-token \
+go run ./cmd/minime-server
+```
+
+When enabled, Mini Me keeps its API/session flow unchanged but forwards script execution to `POST /v1/minime/scripts:run` on Tongue API. This is reversible by switching back to `MINIME_SCRIPT_RUNNER_MODE=local`.
 
 ## Smoke Test
 

@@ -1,13 +1,10 @@
 package minime
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -18,6 +15,7 @@ type ScriptGenerator struct {
 	PythonExecutable     string
 	ImageGeneratorScript string
 	StatePipelineScript  string
+	ScriptRunner         ScriptRunner
 }
 
 type scriptManifest struct {
@@ -273,11 +271,6 @@ func (g ScriptGenerator) applyCandidateManifest(env GenerationEnvironment, sessi
 }
 
 func (g ScriptGenerator) runMainAgentScript(ctx context.Context, sessionID string, env GenerationEnvironment, relativeScriptPath string, args []string, progress func() error) error {
-	pythonExecutable := g.PythonExecutable
-	if strings.TrimSpace(pythonExecutable) == "" {
-		pythonExecutable = "python3"
-	}
-
 	dataRoot, err := filepath.Abs(env.DataRoot)
 	if err != nil {
 		return fmt.Errorf("resolve data root: %w", err)
@@ -288,23 +281,29 @@ func (g ScriptGenerator) runMainAgentScript(ctx context.Context, sessionID strin
 		return err
 	}
 
-	commandArgs := append([]string{"-u", filepath.Join(repoRoot, relativeScriptPath)}, args...)
-	command := exec.CommandContext(ctx, pythonExecutable, commandArgs...)
-	command.Dir = repoRoot
-	command.Env = append(os.Environ(),
-		"PYTHONUNBUFFERED=1",
-		"TONGUE_REPO_ROOT="+repoRoot,
-		"TONGUE_MAIN_AGENT_WORKSPACE_ROOT="+workspaceRoot,
-	)
+	runner := g.ScriptRunner
+	if runner == nil {
+		runner = LocalScriptRunner{}
+	}
+
+	request := ScriptRunRequest{
+		SessionID:          sessionID,
+		RepoRoot:           repoRoot,
+		PythonExecutable:   g.PythonExecutable,
+		RelativeScriptPath: relativeScriptPath,
+		Args:               append([]string(nil), args...),
+		Environment: map[string]string{
+			"PYTHONUNBUFFERED":                 "1",
+			"TONGUE_REPO_ROOT":                 repoRoot,
+			"TONGUE_MAIN_AGENT_WORKSPACE_ROOT": workspaceRoot,
+		},
+	}
 	if strings.TrimSpace(g.ImageGeneratorScript) != "" {
-		command.Env = append(command.Env, "TONGUE_MAIN_AGENT_IMAGE_GENERATOR_SCRIPT="+g.ImageGeneratorScript)
+		request.Environment["TONGUE_MAIN_AGENT_IMAGE_GENERATOR_SCRIPT"] = g.ImageGeneratorScript
 	}
 	if strings.TrimSpace(g.StatePipelineScript) != "" {
-		command.Env = append(command.Env, "TONGUE_SPECIALIST_STATE_PIPELINE_SCRIPT="+g.StatePipelineScript)
+		request.Environment["TONGUE_SPECIALIST_STATE_PIPELINE_SCRIPT"] = g.StatePipelineScript
 	}
-	var outputBuffer bytes.Buffer
-	command.Stdout = &outputBuffer
-	command.Stderr = &outputBuffer
 
 	startedAt := time.Now()
 	deadline, hasDeadline := ctx.Deadline()
@@ -324,13 +323,17 @@ func (g ScriptGenerator) runMainAgentScript(ctx context.Context, sessionID strin
 			workspaceRoot,
 		)
 	}
-	if err := command.Start(); err != nil {
-		return fmt.Errorf("start %s: %w", filepath.Base(relativeScriptPath), err)
+	type runResult struct {
+		output string
+		err    error
 	}
-
-	waitResult := make(chan error, 1)
+	waitResult := make(chan runResult, 1)
 	go func() {
-		waitResult <- command.Wait()
+		output, runErr := runner.Run(ctx, request)
+		waitResult <- runResult{
+			output: output,
+			err:    runErr,
+		}
 	}()
 
 	if progress != nil {
@@ -338,15 +341,15 @@ func (g ScriptGenerator) runMainAgentScript(ctx context.Context, sessionID strin
 		defer ticker.Stop()
 		for {
 			select {
-			case err := <-waitResult:
-				trimmedOutput := strings.TrimSpace(outputBuffer.String())
+			case result := <-waitResult:
+				trimmedOutput := strings.TrimSpace(result.output)
 				if progressErr := progress(); progressErr != nil {
 					return progressErr
 				}
 				if trimmedOutput != "" {
 					fmt.Printf("[minime] output from %s for session %s:\n%s\n", filepath.Base(relativeScriptPath), sessionID, trimmedOutput)
 				}
-				if err != nil {
+				if result.err != nil {
 					if ctx.Err() != nil {
 						return fmt.Errorf(
 							"%s timed out or was cancelled after %s: %w\n%s",
@@ -360,7 +363,7 @@ func (g ScriptGenerator) runMainAgentScript(ctx context.Context, sessionID strin
 						"%s failed after %s: %w\n%s",
 						filepath.Base(relativeScriptPath),
 						time.Since(startedAt).Round(time.Millisecond),
-						err,
+						result.err,
 						trimmedOutput,
 					)
 				}
@@ -373,26 +376,19 @@ func (g ScriptGenerator) runMainAgentScript(ctx context.Context, sessionID strin
 				return nil
 			case <-ticker.C:
 				if progressErr := progress(); progressErr != nil {
-					if err := command.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
-						return progressErr
-					}
 					<-waitResult
 					return progressErr
-				}
-			case <-ctx.Done():
-				if err := command.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
-					return err
 				}
 			}
 		}
 	}
 
-	err = <-waitResult
-	trimmedOutput := strings.TrimSpace(outputBuffer.String())
+	result := <-waitResult
+	trimmedOutput := strings.TrimSpace(result.output)
 	if trimmedOutput != "" {
 		fmt.Printf("[minime] output from %s for session %s:\n%s\n", filepath.Base(relativeScriptPath), sessionID, trimmedOutput)
 	}
-	if err != nil {
+	if result.err != nil {
 		if ctx.Err() != nil {
 			return fmt.Errorf(
 				"%s timed out or was cancelled after %s: %w\n%s",
@@ -406,7 +402,7 @@ func (g ScriptGenerator) runMainAgentScript(ctx context.Context, sessionID strin
 			"%s failed after %s: %w\n%s",
 			filepath.Base(relativeScriptPath),
 			time.Since(startedAt).Round(time.Millisecond),
-			err,
+			result.err,
 			trimmedOutput,
 		)
 	}
