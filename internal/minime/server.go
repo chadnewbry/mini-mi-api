@@ -54,6 +54,9 @@ type Config struct {
 	ImageGeneratorScript string
 	PythonExecutable     string
 	StatePipelineScript  string
+	ScriptRunnerMode     string
+	ScriptRunnerURL      string
+	ScriptRunnerToken    string
 	JobTimeout           time.Duration
 	SupabaseURL          string
 	SupabaseAnonKey      string
@@ -115,6 +118,9 @@ func LoadConfig() Config {
 		ImageGeneratorScript: strings.TrimSpace(os.Getenv("MINIME_IMAGE_GENERATOR_SCRIPT")),
 		PythonExecutable:     strings.TrimSpace(os.Getenv("MINIME_PYTHON_EXECUTABLE")),
 		StatePipelineScript:  strings.TrimSpace(os.Getenv("MINIME_STATE_PIPELINE_SCRIPT")),
+		ScriptRunnerMode:     strings.TrimSpace(os.Getenv("MINIME_SCRIPT_RUNNER_MODE")),
+		ScriptRunnerURL:      strings.TrimSpace(os.Getenv("MINIME_SCRIPT_RUNNER_URL")),
+		ScriptRunnerToken:    strings.TrimSpace(os.Getenv("MINIME_SCRIPT_RUNNER_TOKEN")),
 		JobTimeout:           jobTimeout,
 		SupabaseURL:          strings.TrimSpace(os.Getenv("SUPABASE_URL")),
 		SupabaseAnonKey:      strings.TrimSpace(os.Getenv("SUPABASE_ANON_KEY")),
@@ -308,11 +314,16 @@ func generatorForConfig(config Config) (Generator, error) {
 	case "", "placeholder":
 		return PlaceholderGenerator{}, nil
 	case "script":
+		runner, err := scriptRunnerForConfig(config)
+		if err != nil {
+			return nil, err
+		}
 		return ScriptGenerator{
 			RepoRoot:             config.RepoRoot,
 			PythonExecutable:     config.PythonExecutable,
 			ImageGeneratorScript: config.ImageGeneratorScript,
 			StatePipelineScript:  config.StatePipelineScript,
+			ScriptRunner:         runner,
 		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported generator mode %q", config.GeneratorMode)

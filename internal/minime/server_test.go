@@ -258,6 +258,41 @@ func TestNewServerUsesScriptGeneratorMode(t *testing.T) {
 	if generator.StatePipelineScript != "/tmp/state.py" {
 		t.Fatalf("expected state pipeline script to be forwarded, got %q", generator.StatePipelineScript)
 	}
+	if _, ok := generator.ScriptRunner.(LocalScriptRunner); !ok {
+		t.Fatalf("expected local script runner by default, got %T", generator.ScriptRunner)
+	}
+}
+
+func TestNewServerUsesRemoteScriptRunnerMode(t *testing.T) {
+	t.Parallel()
+
+	server, err := NewServer(Config{
+		Port:              "0",
+		DataRoot:          t.TempDir(),
+		AuthVerifier:      staticAuthVerifier{acceptedToken: "test-token"},
+		GeneratorMode:     "script",
+		ScriptRunnerMode:  "remote",
+		ScriptRunnerURL:   "https://tongue-api.example.com",
+		ScriptRunnerToken: "token-123",
+	})
+	if err != nil {
+		t.Fatalf("create server: %v", err)
+	}
+
+	generator, ok := server.generator.(ScriptGenerator)
+	if !ok {
+		t.Fatalf("expected ScriptGenerator, got %T", server.generator)
+	}
+	runner, ok := generator.ScriptRunner.(RemoteScriptRunner)
+	if !ok {
+		t.Fatalf("expected RemoteScriptRunner, got %T", generator.ScriptRunner)
+	}
+	if runner.BaseURL != "https://tongue-api.example.com" {
+		t.Fatalf("expected remote runner URL to be forwarded, got %q", runner.BaseURL)
+	}
+	if runner.AuthToken != "token-123" {
+		t.Fatalf("expected remote runner token to be forwarded, got %q", runner.AuthToken)
+	}
 }
 
 func TestNewServerRejectsUnknownGeneratorMode(t *testing.T) {
