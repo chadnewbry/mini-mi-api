@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -42,6 +43,30 @@ type timeoutGenerator struct{}
 
 type staticAuthVerifier struct {
 	acceptedToken string
+}
+
+type fakeAssetStorage struct {
+	objects map[string][]byte
+}
+
+func (s *fakeAssetStorage) PutObject(_ context.Context, key, _ string, payload []byte) error {
+	if s.objects == nil {
+		s.objects = map[string][]byte{}
+	}
+	s.objects[key] = append([]byte(nil), payload...)
+	return nil
+}
+
+func (s *fakeAssetStorage) GetObject(_ context.Context, key string) (io.ReadCloser, error) {
+	payload, ok := s.objects[key]
+	if !ok {
+		return nil, os.ErrNotExist
+	}
+	return io.NopCloser(bytes.NewReader(payload)), nil
+}
+
+func (s *fakeAssetStorage) SignedGetURL(_ context.Context, key, fileName string, _ time.Duration) (string, error) {
+	return "https://signed.example.test/" + key + "?download=" + fileName, nil
 }
 
 func (v staticAuthVerifier) VerifyBearerToken(_ context.Context, token string) error {
@@ -349,6 +374,15 @@ func TestLoadConfigUsesDatabaseURLFallback(t *testing.T) {
 	}
 }
 
+func TestLoadConfigParsesAssetSignedURLTTL(t *testing.T) {
+	t.Setenv("MINIME_ASSET_SIGNED_URL_TTL_SECONDS", "1800")
+
+	config := LoadConfig()
+	if config.AssetSignedURLTTL != 30*time.Minute {
+		t.Fatalf("expected asset signed url ttl 30m, got %s", config.AssetSignedURLTTL)
+	}
+}
+
 func TestStoreBackendForConfigRejectsUnknownBackend(t *testing.T) {
 	_, err := storeBackendForConfig(Config{
 		DataRoot:      t.TempDir(),
@@ -376,6 +410,16 @@ func TestStoreBackendForConfigRequiresDatabaseURLForPostgres(t *testing.T) {
 		t.Fatal("expected postgres store backend without database url to fail")
 	}
 	if !strings.Contains(err.Error(), "database url is required") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestAssetStorageForConfigRejectsUnknownBackend(t *testing.T) {
+	_, err := assetStorageForConfig(Config{AssetBackend: "mystery"})
+	if err == nil {
+		t.Fatal("expected unknown asset backend to fail")
+	}
+	if !strings.Contains(err.Error(), `unsupported asset backend "mystery"`) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -536,6 +580,44 @@ func TestServerReloadsPersistedSessionsAndJobs(t *testing.T) {
 	jobRecorder := performRequest(t, reloaded.Handler(), http.MethodGet, "/v1/minime/jobs/"+bootstrapped.LastJobID, "")
 	if jobRecorder.Code != http.StatusOK {
 		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, jobRecorder.Code, jobRecorder.Body.String())
+	}
+}
+
+func TestSessionSnapshotUsesSignedAssetURLsInS3Mode(t *testing.T) {
+	t.Parallel()
+
+	server, err := NewServer(Config{
+		Port:         "0",
+		DataRoot:     t.TempDir(),
+		AuthVerifier: staticAuthVerifier{acceptedToken: "test-token"},
+		AssetBackend: "s3",
+		AssetStorage: &fakeAssetStorage{},
+	})
+	if err != nil {
+		t.Fatalf("create server: %v", err)
+	}
+
+	createRecorder := performRequest(t, server.Handler(), http.MethodPost, "/v1/minime/sessions", `{}`)
+	var created remoteSessionSnapshot
+	decodeJSON(t, createRecorder, &created)
+
+	uploadRecorder := uploadSourcePhoto(t, server, created.SessionID, "source.png", minimalPNG, "image/png")
+	if uploadRecorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, uploadRecorder.Code, uploadRecorder.Body.String())
+	}
+
+	var uploaded remoteSessionSnapshot
+	decodeJSON(t, uploadRecorder, &uploaded)
+	if len(uploaded.SourcePhotos) != 1 {
+		t.Fatalf("expected one source photo, got %d", len(uploaded.SourcePhotos))
+	}
+	if !strings.HasPrefix(uploaded.SourcePhotos[0].DownloadURL, "https://signed.example.test/") {
+		t.Fatalf("expected signed source photo url, got %q", uploaded.SourcePhotos[0].DownloadURL)
+	}
+
+	downloadPath := strings.TrimPrefix(uploaded.SourcePhotos[0].DownloadURL, "http://example.com")
+	if strings.HasPrefix(downloadPath, "/v1/minime/assets/") {
+		t.Fatalf("expected signed object URL instead of local asset route, got %q", uploaded.SourcePhotos[0].DownloadURL)
 	}
 }
 
