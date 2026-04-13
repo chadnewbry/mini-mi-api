@@ -339,6 +339,59 @@ func TestLoadConfigCanDisableEmbeddedWorkers(t *testing.T) {
 	}
 }
 
+func TestLoadConfigUsesDatabaseURLFallback(t *testing.T) {
+	t.Setenv("MINIME_DATABASE_URL", "")
+	t.Setenv("DATABASE_URL", "postgres://example")
+
+	config := LoadConfig()
+	if config.DatabaseURL != "postgres://example" {
+		t.Fatalf("expected database url fallback, got %q", config.DatabaseURL)
+	}
+}
+
+func TestStoreBackendForConfigRejectsUnknownBackend(t *testing.T) {
+	_, err := storeBackendForConfig(Config{
+		DataRoot:      t.TempDir(),
+		StoreBackend:  "mystery",
+		AuthVerifier:  staticAuthVerifier{acceptedToken: "test-token"},
+		GeneratorMode: "placeholder",
+	})
+	if err == nil {
+		t.Fatal("expected unknown store backend to fail")
+	}
+	if !strings.Contains(err.Error(), `unsupported store backend "mystery"`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestStoreBackendForConfigRequiresDatabaseURLForPostgres(t *testing.T) {
+	_, err := storeBackendForConfig(Config{
+		DataRoot:      t.TempDir(),
+		StoreBackend:  "postgres",
+		DatabaseURL:   "",
+		AuthVerifier:  staticAuthVerifier{acceptedToken: "test-token"},
+		GeneratorMode: "placeholder",
+	})
+	if err == nil {
+		t.Fatal("expected postgres store backend without database url to fail")
+	}
+	if !strings.Contains(err.Error(), "database url is required") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestWriteStorePersistErrorUsesConflictStatusForVersionConflicts(t *testing.T) {
+	recorder := httptest.NewRecorder()
+
+	writeStorePersistError(recorder, errStoreVersionConflict)
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("expected conflict status, got %d", recorder.Code)
+	}
+	if !strings.Contains(recorder.Body.String(), "retry request") {
+		t.Fatalf("expected retry guidance in body, got %q", recorder.Body.String())
+	}
+}
+
 func TestBootstrapCreatesJobAndExposesJobEndpoint(t *testing.T) {
 	t.Parallel()
 

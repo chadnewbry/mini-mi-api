@@ -27,6 +27,10 @@ services:
         value: "250"
       - key: MINIME_JOB_TIMEOUT_SECONDS
         value: "1200"
+      - key: MINIME_STORE_BACKEND
+        value: postgres
+      - key: MINIME_DATABASE_URL
+        sync: false
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_ANON_KEY
