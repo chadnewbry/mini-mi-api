@@ -27,7 +27,8 @@ Why this is the best fit for the current backend:
 
 Set these in Render before using real generation:
 
-- `MINIME_DEVICE_TOKENS`
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`
 - `GEMINI_API_KEY`
 - `XAI_API_KEY`
 
@@ -45,7 +46,7 @@ You can add others later if you change the generation stack.
 ```bash
 cd /Users/chadnewbry/dev/mini-mi-api
 MINIME_BASE_URL=https://your-render-url.onrender.com \
-MINIME_DEVICE_TOKEN=your-device-token \
+MINIME_ACCESS_TOKEN=your-supabase-access-token \
 bash scripts/test_hosted_backend.sh
 ```
 

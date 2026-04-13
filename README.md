@@ -14,7 +14,7 @@ This repo contains:
 
 The backend currently supports:
 
-- bearer-token auth with app-issued device tokens
+- Supabase-backed bearer-token auth for app clients
 - session creation, photo upload, candidate generation, selection, state generation, and asset download
 - queued background jobs with job polling
 - local-disk persistence for sessions, jobs, and generated assets
@@ -32,7 +32,6 @@ go run ./cmd/minime-server
 Default settings:
 
 - port: `8088`
-- device token: `dev-minime-token`
 - data root: `.data`
 - photo upload limit: `20 MB` per image
 - accepted upload types: `png`, `jpeg`, `gif`, `heic`, `webp`
@@ -41,7 +40,8 @@ Default settings:
 
 - `MINIME_PORT`
 - `PORT`
-- `MINIME_DEVICE_TOKENS`
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`
 - `MINIME_DATA_ROOT`
 - `MINIME_WORKER_COUNT`
 - `MINIME_RUN_WORKERS`
@@ -98,7 +98,7 @@ For a deployed service:
 ```bash
 cd /Users/chadnewbry/dev/mini-mi-api
 MINIME_BASE_URL=https://your-service.onrender.com \
-MINIME_DEVICE_TOKEN=your-device-token \
+SUPABASE_ACCESS_TOKEN=your-supabase-access-token \
 bash scripts/test_hosted_backend.sh
 ```
 
@@ -128,6 +128,15 @@ Use the included deployment files:
 
 This deploy shape runs the API and embedded workers together on one Render web service with a persistent disk.
 The hosted defaults now use `4` workers with a `20 minute` per-job timeout so one hung generation run does not block the full queue indefinitely.
+
+For app auth, the backend verifies the presented bearer token by calling:
+
+`GET {SUPABASE_URL}/auth/v1/user`
+
+with:
+
+- `Authorization: Bearer <token>`
+- `apikey: <SUPABASE_ANON_KEY>`
 
 ## Production Reality
 

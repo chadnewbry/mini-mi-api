@@ -27,7 +27,9 @@ services:
         value: "250"
       - key: MINIME_JOB_TIMEOUT_SECONDS
         value: "1200"
-      - key: MINIME_DEVICE_TOKENS
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
         sync: false
       - key: GEMINI_API_KEY
         sync: false

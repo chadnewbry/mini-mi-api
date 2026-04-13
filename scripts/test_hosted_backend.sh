@@ -2,7 +2,7 @@
 set -euo pipefail
 
 BASE_URL="${MINIME_BASE_URL:-${1:-}}"
-DEVICE_TOKEN="${MINIME_DEVICE_TOKEN:-${2:-}}"
+ACCESS_TOKEN="${MINIME_ACCESS_TOKEN:-${2:-}}"
 UPLOAD_FILE="${MINIME_TEST_UPLOAD_FILE:-}"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/mini-mi-hosted-test.XXXXXX")"
 
@@ -12,12 +12,12 @@ cleanup() {
 trap cleanup EXIT
 
 if [[ -z "$BASE_URL" ]]; then
-  echo "usage: MINIME_BASE_URL=https://... MINIME_DEVICE_TOKEN=... $0" >&2
+  echo "usage: MINIME_BASE_URL=https://... MINIME_ACCESS_TOKEN=... $0" >&2
   exit 1
 fi
 
-if [[ -z "$DEVICE_TOKEN" ]]; then
-  echo "MINIME_DEVICE_TOKEN is required" >&2
+if [[ -z "$ACCESS_TOKEN" ]]; then
+  echo "MINIME_ACCESS_TOKEN is required" >&2
   exit 1
 fi
 
@@ -37,7 +37,7 @@ wait_for_job() {
   for _ in {1..300}; do
     local job_json
     job_json="$(curl -fsS "$BASE_URL/v1/minime/jobs/$job_id" \
-      -H "Authorization: Bearer $DEVICE_TOKEN")"
+      -H "Authorization: Bearer $ACCESS_TOKEN")"
     local status
     status="$(printf '%s' "$job_json" | jq -r '.status')"
     case "$status" in
@@ -63,22 +63,22 @@ extract_job_id() {
 curl -fsS "$BASE_URL/healthz" >/dev/null
 
 SESSION_JSON="$(curl -fsS -X POST "$BASE_URL/v1/minime/sessions" \
-  -H "Authorization: Bearer $DEVICE_TOKEN" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{}')"
 SESSION_ID="$(printf '%s' "$SESSION_JSON" | jq -r '.session_id')"
 
 curl -fsS -X POST "$BASE_URL/v1/minime/sessions/$SESSION_ID/bootstrap" \
-  -H "Authorization: Bearer $DEVICE_TOKEN" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{}' >/dev/null
 
 curl -fsS -X POST "$BASE_URL/v1/minime/sessions/$SESSION_ID/photos" \
-  -H "Authorization: Bearer $DEVICE_TOKEN" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
   -F "photos=@$UPLOAD_FILE;type=image/png" >/dev/null
 
 CANDIDATES_RESPONSE="$(curl -fsS -X POST "$BASE_URL/v1/minime/sessions/$SESSION_ID/candidates:generate" \
-  -H "Authorization: Bearer $DEVICE_TOKEN" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
   -H 'Content-Type: application/json' \
   -D - \
   -d '{}')"
@@ -86,7 +86,7 @@ CANDIDATE_JOB_ID="$(extract_job_id "$CANDIDATES_RESPONSE")"
 wait_for_job "$CANDIDATE_JOB_ID"
 
 SESSION_JSON="$(curl -fsS "$BASE_URL/v1/minime/sessions/$SESSION_ID" \
-  -H "Authorization: Bearer $DEVICE_TOKEN")"
+  -H "Authorization: Bearer $ACCESS_TOKEN")"
 
 printf '%s' "$SESSION_JSON" | jq -e '
   .status == "candidates-generated" and
@@ -95,7 +95,7 @@ printf '%s' "$SESSION_JSON" | jq -e '
 ' >/dev/null
 
 STATES_RESPONSE="$(curl -fsS -X POST "$BASE_URL/v1/minime/sessions/$SESSION_ID/states:generate" \
-  -H "Authorization: Bearer $DEVICE_TOKEN" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
   -H 'Content-Type: application/json' \
   -D - \
   -d '{"states":["idle-day","working"]}')"
@@ -103,7 +103,7 @@ STATE_JOB_ID="$(extract_job_id "$STATES_RESPONSE")"
 wait_for_job "$STATE_JOB_ID"
 
 SESSION_JSON="$(curl -fsS "$BASE_URL/v1/minime/sessions/$SESSION_ID" \
-  -H "Authorization: Bearer $DEVICE_TOKEN")"
+  -H "Authorization: Bearer $ACCESS_TOKEN")"
 
 printf '%s' "$SESSION_JSON" | jq -e '
   .status == "states-generated" and

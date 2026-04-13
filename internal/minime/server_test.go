@@ -40,6 +40,17 @@ type progressiveGenerator struct {
 
 type timeoutGenerator struct{}
 
+type staticAuthVerifier struct {
+	acceptedToken string
+}
+
+func (v staticAuthVerifier) VerifyBearerToken(_ context.Context, token string) error {
+	if token == v.acceptedToken {
+		return nil
+	}
+	return errUnauthorizedBearerToken
+}
+
 func (g *recordingGenerator) Bootstrap(_ context.Context, _ GenerationEnvironment, session *sessionRecord) error {
 	g.bootstrapCalled = true
 	session.Status = "custom-bootstrap"
@@ -223,7 +234,7 @@ func TestNewServerUsesScriptGeneratorMode(t *testing.T) {
 	server, err := NewServer(Config{
 		Port:                 "0",
 		DataRoot:             t.TempDir(),
-		DeviceTokens:         []string{"test-token"},
+		AuthVerifier:         staticAuthVerifier{acceptedToken: "test-token"},
 		GeneratorMode:        "script",
 		RepoRoot:             "/tmp/repo-root",
 		PythonExecutable:     "/usr/bin/python3",
@@ -255,7 +266,7 @@ func TestNewServerRejectsUnknownGeneratorMode(t *testing.T) {
 	_, err := NewServer(Config{
 		Port:          "0",
 		DataRoot:      t.TempDir(),
-		DeviceTokens:  []string{"test-token"},
+		AuthVerifier:  staticAuthVerifier{acceptedToken: "test-token"},
 		GeneratorMode: "mystery",
 	})
 	if err == nil {
@@ -339,7 +350,7 @@ func TestWorkerServerProcessesQueuedJobsFromSeparateApiServer(t *testing.T) {
 	apiServer, err := NewServer(Config{
 		Port:               "0",
 		DataRoot:           dataRoot,
-		DeviceTokens:       []string{"test-token"},
+		AuthVerifier:       staticAuthVerifier{acceptedToken: "test-token"},
 		RunWorkers:         false,
 		WorkerPollInterval: 10 * time.Millisecond,
 	})
@@ -371,7 +382,7 @@ func TestWorkerServerProcessesQueuedJobsFromSeparateApiServer(t *testing.T) {
 	workerServer, err := NewServer(Config{
 		Port:               "0",
 		DataRoot:           dataRoot,
-		DeviceTokens:       []string{"test-token"},
+		AuthVerifier:       staticAuthVerifier{acceptedToken: "test-token"},
 		RunWorkers:         true,
 		WorkerPollInterval: 10 * time.Millisecond,
 	})
@@ -399,7 +410,7 @@ func TestServerReloadsPersistedSessionsAndJobs(t *testing.T) {
 	config := Config{
 		Port:         "0",
 		DataRoot:     dataRoot,
-		DeviceTokens: []string{"test-token"},
+		AuthVerifier: staticAuthVerifier{acceptedToken: "test-token"},
 	}
 
 	server, err := NewServer(config)
@@ -523,7 +534,7 @@ func TestRunningCandidateJobPublishesPartialCandidates(t *testing.T) {
 	server, err := NewServer(Config{
 		Port:               "0",
 		DataRoot:           t.TempDir(),
-		DeviceTokens:       []string{"test-token"},
+		AuthVerifier:       staticAuthVerifier{acceptedToken: "test-token"},
 		Generator:          generator,
 		RunWorkers:         true,
 		WorkerPollInterval: 10 * time.Millisecond,
@@ -659,7 +670,7 @@ func TestServerUsesInjectedGenerator(t *testing.T) {
 	server, err := NewServer(Config{
 		Port:         "0",
 		DataRoot:     t.TempDir(),
-		DeviceTokens: []string{"test-token"},
+		AuthVerifier: staticAuthVerifier{acceptedToken: "test-token"},
 		Generator:    generator,
 	})
 	if err != nil {
@@ -698,7 +709,7 @@ func TestActiveGenerationRejectsConcurrentSessionMutations(t *testing.T) {
 	server, err := NewServer(Config{
 		Port:         "0",
 		DataRoot:     t.TempDir(),
-		DeviceTokens: []string{"test-token"},
+		AuthVerifier: staticAuthVerifier{acceptedToken: "test-token"},
 		Generator:    generator,
 	})
 	if err != nil {
@@ -806,7 +817,7 @@ func TestFailedCandidateGenerationPersistsJobAcrossReload(t *testing.T) {
 	server, err := NewServer(Config{
 		Port:         "0",
 		DataRoot:     dataRoot,
-		DeviceTokens: []string{"test-token"},
+		AuthVerifier: staticAuthVerifier{acceptedToken: "test-token"},
 		Generator: &failingGenerator{
 			candidateError: errors.New("candidate generation failed"),
 		},
@@ -862,7 +873,7 @@ func TestFailedCandidateGenerationPersistsJobAcrossReload(t *testing.T) {
 	reloaded, err := NewServer(Config{
 		Port:         "0",
 		DataRoot:     dataRoot,
-		DeviceTokens: []string{"test-token"},
+		AuthVerifier: staticAuthVerifier{acceptedToken: "test-token"},
 		Generator: &failingGenerator{
 			candidateError: errors.New("candidate generation failed"),
 		},
@@ -893,7 +904,7 @@ func TestReloadMarksRunningJobsAsFailed(t *testing.T) {
 	config := Config{
 		Port:         "0",
 		DataRoot:     dataRoot,
-		DeviceTokens: []string{"test-token"},
+		AuthVerifier: staticAuthVerifier{acceptedToken: "test-token"},
 	}
 
 	server, err := NewServer(config)
@@ -963,7 +974,7 @@ func TestReloadRequeuesQueuedJobs(t *testing.T) {
 	config := Config{
 		Port:         "0",
 		DataRoot:     dataRoot,
-		DeviceTokens: []string{"test-token"},
+		AuthVerifier: staticAuthVerifier{acceptedToken: "test-token"},
 	}
 
 	server, err := NewServer(config)
@@ -1023,7 +1034,7 @@ func TestScriptGeneratorBootstrapCreatesWorkspaceFiles(t *testing.T) {
 	server, err := NewServer(Config{
 		Port:         "0",
 		DataRoot:     dataRoot,
-		DeviceTokens: []string{"test-token"},
+		AuthVerifier: staticAuthVerifier{acceptedToken: "test-token"},
 		Generator: ScriptGenerator{
 			RepoRoot: repoRoot,
 		},
@@ -1076,7 +1087,7 @@ func TestScriptGeneratorGeneratesCandidatesViaScript(t *testing.T) {
 	server, err := NewServer(Config{
 		Port:         "0",
 		DataRoot:     dataRoot,
-		DeviceTokens: []string{"test-token"},
+		AuthVerifier: staticAuthVerifier{acceptedToken: "test-token"},
 		Generator: ScriptGenerator{
 			RepoRoot:             repoRoot,
 			ImageGeneratorScript: fakeGeneratorScript,
@@ -1150,7 +1161,7 @@ func TestScriptGeneratorAppendsCandidatePromptSuffixAndCameraGuidance(t *testing
 	server, err := NewServer(Config{
 		Port:         "0",
 		DataRoot:     dataRoot,
-		DeviceTokens: []string{"test-token"},
+		AuthVerifier: staticAuthVerifier{acceptedToken: "test-token"},
 		Generator: ScriptGenerator{
 			RepoRoot:             repoRoot,
 			ImageGeneratorScript: fakeGeneratorScript,
@@ -1237,7 +1248,7 @@ func TestScriptGeneratorGeneratesStatesViaScript(t *testing.T) {
 	server, err := NewServer(Config{
 		Port:         "0",
 		DataRoot:     dataRoot,
-		DeviceTokens: []string{"test-token"},
+		AuthVerifier: staticAuthVerifier{acceptedToken: "test-token"},
 		Generator: ScriptGenerator{
 			RepoRoot:             repoRoot,
 			ImageGeneratorScript: fakeGeneratorScript,
@@ -1344,7 +1355,7 @@ func TestScriptGeneratorForwardsStatePromptSuffix(t *testing.T) {
 	server, err := NewServer(Config{
 		Port:         "0",
 		DataRoot:     dataRoot,
-		DeviceTokens: []string{"test-token"},
+		AuthVerifier: staticAuthVerifier{acceptedToken: "test-token"},
 		Generator: ScriptGenerator{
 			RepoRoot:             repoRoot,
 			ImageGeneratorScript: fakeGeneratorScript,
@@ -1702,7 +1713,7 @@ func TestGenerateStatesNormalizesAndDeduplicatesRequestedStates(t *testing.T) {
 	server, err := NewServer(Config{
 		Port:         "0",
 		DataRoot:     t.TempDir(),
-		DeviceTokens: []string{"test-token"},
+		AuthVerifier: staticAuthVerifier{acceptedToken: "test-token"},
 		Generator:    generator,
 	})
 	if err != nil {
@@ -1755,7 +1766,7 @@ func TestQueuedStateJobFailsAfterTimeout(t *testing.T) {
 	server, err := NewServer(Config{
 		Port:         "0",
 		DataRoot:     t.TempDir(),
-		DeviceTokens: []string{"test-token"},
+		AuthVerifier: staticAuthVerifier{acceptedToken: "test-token"},
 		Generator:    timeoutGenerator{},
 		JobTimeout:   50 * time.Millisecond,
 	})
@@ -1904,7 +1915,7 @@ func newTestServer(t *testing.T) *Server {
 	server, err := NewServer(Config{
 		Port:         "0",
 		DataRoot:     t.TempDir(),
-		DeviceTokens: []string{"test-token"},
+		AuthVerifier: staticAuthVerifier{acceptedToken: "test-token"},
 	})
 	if err != nil {
 		t.Fatalf("create test server: %v", err)

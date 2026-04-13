@@ -45,7 +45,6 @@ var allowedStates = func() map[string]struct{} {
 type Config struct {
 	Port                 string
 	DataRoot             string
-	DeviceTokens         []string
 	WorkerCount          int
 	RunWorkers           bool
 	WorkerPollInterval   time.Duration
@@ -56,6 +55,10 @@ type Config struct {
 	PythonExecutable     string
 	StatePipelineScript  string
 	JobTimeout           time.Duration
+	SupabaseURL          string
+	SupabaseAnonKey      string
+	AuthHTTPClient       *http.Client
+	AuthVerifier         BearerTokenVerifier
 }
 
 func LoadConfig() Config {
@@ -70,21 +73,6 @@ func LoadConfig() Config {
 	dataRoot := strings.TrimSpace(os.Getenv("MINIME_DATA_ROOT"))
 	if dataRoot == "" {
 		dataRoot = ".data"
-	}
-
-	rawTokens := strings.TrimSpace(os.Getenv("MINIME_DEVICE_TOKENS"))
-	tokens := []string{"dev-minime-token"}
-	if rawTokens != "" {
-		tokens = nil
-		for _, token := range strings.Split(rawTokens, ",") {
-			trimmed := strings.TrimSpace(token)
-			if trimmed != "" {
-				tokens = append(tokens, trimmed)
-			}
-		}
-		if len(tokens) == 0 {
-			tokens = []string{"dev-minime-token"}
-		}
 	}
 
 	workerCount := 1
@@ -119,7 +107,6 @@ func LoadConfig() Config {
 	return Config{
 		Port:                 port,
 		DataRoot:             dataRoot,
-		DeviceTokens:         tokens,
 		WorkerCount:          workerCount,
 		RunWorkers:           runWorkers,
 		WorkerPollInterval:   workerPollInterval,
@@ -129,6 +116,8 @@ func LoadConfig() Config {
 		PythonExecutable:     strings.TrimSpace(os.Getenv("MINIME_PYTHON_EXECUTABLE")),
 		StatePipelineScript:  strings.TrimSpace(os.Getenv("MINIME_STATE_PIPELINE_SCRIPT")),
 		JobTimeout:           jobTimeout,
+		SupabaseURL:          strings.TrimSpace(os.Getenv("SUPABASE_URL")),
+		SupabaseAnonKey:      strings.TrimSpace(os.Getenv("SUPABASE_ANON_KEY")),
 	}
 }
 
@@ -137,6 +126,7 @@ type Server struct {
 	mux    *http.ServeMux
 
 	generator    Generator
+	auth         BearerTokenVerifier
 	workQueue    chan string
 	generationMu sync.Mutex
 	mu           sync.Mutex
@@ -218,6 +208,9 @@ type remoteSessionSnapshot struct {
 	CreatedAt           time.Time                `json:"created_at"`
 	UpdatedAt           time.Time                `json:"updated_at"`
 	Status              string                   `json:"status"`
+	CurrentStepLabel    string                   `json:"current_step_label,omitempty"`
+	CurrentIndex        *int                     `json:"current_index,omitempty"`
+	TotalCount          *int                     `json:"total_count,omitempty"`
 	Notes               string                   `json:"notes,omitempty"`
 	SourcePhotos        []remoteAssetRecord      `json:"source_photos"`
 	Candidates          []remoteAssetRecord      `json:"candidates"`
@@ -280,11 +273,16 @@ func NewServer(config Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	authVerifier, err := bearerTokenVerifierForConfig(config)
+	if err != nil {
+		return nil, err
+	}
 
 	server := &Server{
 		config:       config,
 		mux:          http.NewServeMux(),
 		generator:    generator,
+		auth:         authVerifier,
 		workQueue:    make(chan string, 64),
 		sessions:     map[string]*sessionRecord{},
 		assets:       map[string]*assetRecord{},
@@ -358,8 +356,12 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		}
 
 		token := strings.TrimSpace(strings.TrimPrefix(header, "Bearer "))
-		if !slices.Contains(s.config.DeviceTokens, token) {
-			writeError(w, http.StatusUnauthorized, "invalid device token")
+		if err := s.auth.VerifyBearerToken(r.Context(), token); err != nil {
+			if errors.Is(err, errUnauthorizedBearerToken) {
+				writeError(w, http.StatusUnauthorized, "unauthorized")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "auth verification failed")
 			return
 		}
 
@@ -1243,6 +1245,9 @@ func (s *Server) snapshotForSession(r *http.Request, session *sessionRecord) rem
 		CreatedAt:           session.CreatedAt,
 		UpdatedAt:           session.UpdatedAt,
 		Status:              session.Status,
+		CurrentStepLabel:    session.CurrentStepLabel,
+		CurrentIndex:        session.CurrentIndex,
+		TotalCount:          session.TotalCount,
 		Notes:               session.Notes,
 		SourcePhotos:        sourcePhotos,
 		Candidates:          candidates,
