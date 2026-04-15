@@ -73,8 +73,9 @@ type Config struct {
 	AssetObjectTagging   string
 	AssetStorage         assetStorage
 	JobTimeout           time.Duration
-	SupabaseURL          string
-	SupabaseAnonKey      string
+	CognitoIssuer        string
+	CognitoClientID      string
+	CognitoJWKSURL       string
 	AuthHTTPClient       *http.Client
 	AuthVerifier         BearerTokenVerifier
 }
@@ -159,8 +160,9 @@ func LoadConfig() Config {
 		AssetSignedURLTTL:    assetSignedURLTTL,
 		AssetObjectTagging:   strings.TrimSpace(os.Getenv("MINIME_ASSET_OBJECT_TAGGING")),
 		JobTimeout:           jobTimeout,
-		SupabaseURL:          strings.TrimSpace(os.Getenv("SUPABASE_URL")),
-		SupabaseAnonKey:      strings.TrimSpace(os.Getenv("SUPABASE_ANON_KEY")),
+		CognitoIssuer:        strings.TrimSpace(os.Getenv("TONGUE_COGNITO_ISSUER")),
+		CognitoClientID:      strings.TrimSpace(os.Getenv("TONGUE_COGNITO_CLIENT_ID")),
+		CognitoJWKSURL:       strings.TrimSpace(os.Getenv("TONGUE_COGNITO_JWKS_URL")),
 	}
 }
 

@@ -31,9 +31,11 @@ services:
         value: postgres
       - key: MINIME_DATABASE_URL
         sync: false
-      - key: SUPABASE_URL
+      - key: TONGUE_COGNITO_ISSUER
         sync: false
-      - key: SUPABASE_ANON_KEY
+      - key: TONGUE_COGNITO_CLIENT_ID
+        sync: false
+      - key: TONGUE_COGNITO_JWKS_URL
         sync: false
       - key: GEMINI_API_KEY
         sync: false

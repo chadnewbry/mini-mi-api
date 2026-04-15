@@ -14,7 +14,7 @@ This repo contains:
 
 The backend currently supports:
 
-- Supabase-backed bearer-token auth for app clients
+- Cognito-backed bearer-token auth for app clients
 - session creation, photo upload, candidate generation, selection, state generation, and asset download
 - queued background jobs with job polling
 - configurable session/job store backend: local file (default) or Postgres with optimistic concurrency
@@ -40,8 +40,9 @@ Default settings:
 
 - `MINIME_PORT`
 - `PORT`
-- `SUPABASE_URL`
-- `SUPABASE_ANON_KEY`
+- `TONGUE_COGNITO_ISSUER`
+- `TONGUE_COGNITO_CLIENT_ID`
+- `TONGUE_COGNITO_JWKS_URL`
 - `MINIME_DATA_ROOT`
 - `MINIME_WORKER_COUNT`
 - `MINIME_RUN_WORKERS`
@@ -144,7 +145,7 @@ For a deployed service:
 ```bash
 cd /Users/chadnewbry/dev/mini-mi-api
 MINIME_BASE_URL=https://your-service.onrender.com \
-SUPABASE_ACCESS_TOKEN=your-supabase-access-token \
+MINIME_ACCESS_TOKEN=your-cognito-access-token \
 bash scripts/test_hosted_backend.sh
 ```
 
@@ -177,14 +178,15 @@ Use the included deployment files:
 This deploy shape runs the API and embedded workers together on one Render web service with a persistent disk.
 The hosted defaults now use `4` workers with a `20 minute` per-job timeout so one hung generation run does not block the full queue indefinitely.
 
-For app auth, the backend verifies the presented bearer token by calling:
+For app auth, the backend verifies the presented bearer token as a Cognito access token:
 
-`GET {SUPABASE_URL}/auth/v1/user`
-
-with:
-
-- `Authorization: Bearer <token>`
-- `apikey: <SUPABASE_ANON_KEY>`
+- `Authorization: Bearer <access-token>`
+- signed by the Cognito JWKS for `TONGUE_COGNITO_ISSUER`
+- `iss` must match `TONGUE_COGNITO_ISSUER`
+- `token_use` must be `access`
+- `client_id` must match `TONGUE_COGNITO_CLIENT_ID`
+- `exp` must still be valid
+- `sub` must be present
 
 ## Production Reality
 

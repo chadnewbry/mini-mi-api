@@ -27,8 +27,9 @@ Why this is the best fit for the current backend:
 
 Set these in Render before using real generation:
 
-- `SUPABASE_URL`
-- `SUPABASE_ANON_KEY`
+- `TONGUE_COGNITO_ISSUER`
+- `TONGUE_COGNITO_CLIENT_ID`
+- `TONGUE_COGNITO_JWKS_URL`
 - `GEMINI_API_KEY`
 - `XAI_API_KEY`
 
@@ -46,7 +47,7 @@ You can add others later if you change the generation stack.
 ```bash
 cd /Users/chadnewbry/dev/mini-mi-api
 MINIME_BASE_URL=https://your-render-url.onrender.com \
-MINIME_ACCESS_TOKEN=your-supabase-access-token \
+MINIME_ACCESS_TOKEN=your-cognito-access-token \
 bash scripts/test_hosted_backend.sh
 ```
 
