@@ -80,6 +80,9 @@ type Config struct {
 	CognitoJWKSURL       string
 	AuthHTTPClient       *http.Client
 	AuthVerifier         BearerTokenVerifier
+	TongueAPIBaseURL     string
+	TongueInternalToken  string
+	TongueAPIHTTPClient  *http.Client
 }
 
 func LoadConfig() Config {
@@ -167,6 +170,8 @@ func LoadConfig() Config {
 		CognitoIssuer:        strings.TrimSpace(os.Getenv("TONGUE_COGNITO_ISSUER")),
 		CognitoClientID:      strings.TrimSpace(os.Getenv("TONGUE_COGNITO_CLIENT_ID")),
 		CognitoJWKSURL:       strings.TrimSpace(os.Getenv("TONGUE_COGNITO_JWKS_URL")),
+		TongueAPIBaseURL:     firstNonEmptyEnv("TONGUE_API_INTERNAL_BASE_URL", "TONGUE_API_BASE_URL"),
+		TongueInternalToken:  firstNonEmptyEnv("TONGUE_INTERNAL_SERVICE_TOKEN", "TONGUE_API_INTERNAL_TOKEN"),
 	}
 }
 
@@ -186,6 +191,7 @@ type Server struct {
 	store        storeBackend
 	assetStorage assetStorage
 	storeVersion int64
+	tongueAPI    *tongueSnapshotClient
 }
 
 type assetRecord struct {
@@ -340,6 +346,10 @@ func NewServer(config Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	tongueAPI, err := newTongueSnapshotClient(config)
+	if err != nil {
+		return nil, err
+	}
 
 	server := &Server{
 		config:       config,
@@ -353,6 +363,7 @@ func NewServer(config Config) (*Server, error) {
 		queuedJobIDs: map[string]struct{}{},
 		store:        store,
 		assetStorage: assetStorage,
+		tongueAPI:    tongueAPI,
 	}
 	if err := server.loadPersistedStore(); err != nil {
 		return nil, err
@@ -1187,12 +1198,13 @@ func (s *Server) generationEnvironment() GenerationEnvironment {
 		},
 		PublishProgress: func(progress *sessionRecord) error {
 			s.mu.Lock()
-			defer s.mu.Unlock()
 			if err := s.syncStoreLocked(); err != nil {
+				s.mu.Unlock()
 				return err
 			}
 			session := s.sessions[progress.ID]
 			if session == nil {
+				s.mu.Unlock()
 				return errors.New("session not found")
 			}
 			applySessionProgressLocked(session, progress)
@@ -1205,7 +1217,17 @@ func (s *Server) generationEnvironment() GenerationEnvironment {
 					job.Summary = strings.TrimSpace(progress.Notes)
 				}
 			}
-			return s.persistStoreLocked()
+			if err := s.persistStoreLocked(); err != nil {
+				s.mu.Unlock()
+				return err
+			}
+			snapshot := cloneSessionRecord(session)
+			s.mu.Unlock()
+
+			if s.tongueAPI != nil {
+				return s.tongueAPI.UpsertSessionSnapshot(context.Background(), snapshot)
+			}
+			return nil
 		},
 	}
 }
