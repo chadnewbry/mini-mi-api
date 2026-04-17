@@ -22,6 +22,14 @@ type BearerTokenVerifier interface {
 	VerifyBearerToken(ctx context.Context, token string) error
 }
 
+type StaticBearerTokenVerifier struct {
+	token string
+}
+
+type AnyBearerTokenVerifier struct {
+	verifiers []BearerTokenVerifier
+}
+
 type CognitoBearerTokenVerifier struct {
 	issuer     string
 	clientID   string
@@ -83,6 +91,61 @@ func NewCognitoBearerTokenVerifier(issuer, clientID, jwksURL string, httpClient 
 		httpClient: httpClient,
 		keyCache:   map[string]*rsa.PublicKey{},
 	}, nil
+}
+
+func NewStaticBearerTokenVerifier(token string) (*StaticBearerTokenVerifier, error) {
+	normalizedToken := strings.TrimSpace(token)
+	if normalizedToken == "" {
+		return nil, errors.New("MINIME_INTERNAL_BEARER_TOKEN is required")
+	}
+	return &StaticBearerTokenVerifier{token: normalizedToken}, nil
+}
+
+func (v *StaticBearerTokenVerifier) VerifyBearerToken(_ context.Context, token string) error {
+	if v == nil || strings.TrimSpace(v.token) == "" {
+		return errors.New("static bearer token verifier is not configured")
+	}
+	if strings.TrimSpace(token) != v.token {
+		return errUnauthorizedBearerToken
+	}
+	return nil
+}
+
+func NewAnyBearerTokenVerifier(verifiers ...BearerTokenVerifier) (*AnyBearerTokenVerifier, error) {
+	filtered := make([]BearerTokenVerifier, 0, len(verifiers))
+	for _, verifier := range verifiers {
+		if verifier != nil {
+			filtered = append(filtered, verifier)
+		}
+	}
+	if len(filtered) == 0 {
+		return nil, errors.New("at least one bearer token verifier is required")
+	}
+	return &AnyBearerTokenVerifier{verifiers: filtered}, nil
+}
+
+func (v *AnyBearerTokenVerifier) VerifyBearerToken(ctx context.Context, token string) error {
+	if v == nil || len(v.verifiers) == 0 {
+		return errors.New("compound bearer token verifier is not configured")
+	}
+
+	var firstNonUnauthorized error
+	for _, verifier := range v.verifiers {
+		err := verifier.VerifyBearerToken(ctx, token)
+		if err == nil {
+			return nil
+		}
+		if errors.Is(err, errUnauthorizedBearerToken) {
+			continue
+		}
+		if firstNonUnauthorized == nil {
+			firstNonUnauthorized = err
+		}
+	}
+	if firstNonUnauthorized != nil {
+		return firstNonUnauthorized
+	}
+	return errUnauthorizedBearerToken
 }
 
 func (v *CognitoBearerTokenVerifier) VerifyBearerToken(ctx context.Context, token string) error {
@@ -260,10 +323,37 @@ func bearerTokenVerifierForConfig(config Config) (BearerTokenVerifier, error) {
 		return config.AuthVerifier, nil
 	}
 
-	return NewCognitoBearerTokenVerifier(
-		config.CognitoIssuer,
-		config.CognitoClientID,
-		config.CognitoJWKSURL,
-		config.AuthHTTPClient,
-	)
+	mode := strings.TrimSpace(strings.ToLower(config.AuthMode))
+	if mode == "" {
+		mode = "cognito"
+	}
+
+	switch mode {
+	case "cognito":
+		return NewCognitoBearerTokenVerifier(
+			config.CognitoIssuer,
+			config.CognitoClientID,
+			config.CognitoJWKSURL,
+			config.AuthHTTPClient,
+		)
+	case "internal":
+		return NewStaticBearerTokenVerifier(config.InternalBearerToken)
+	case "cognito_or_internal":
+		cognitoVerifier, err := NewCognitoBearerTokenVerifier(
+			config.CognitoIssuer,
+			config.CognitoClientID,
+			config.CognitoJWKSURL,
+			config.AuthHTTPClient,
+		)
+		if err != nil {
+			return nil, err
+		}
+		internalVerifier, err := NewStaticBearerTokenVerifier(config.InternalBearerToken)
+		if err != nil {
+			return nil, err
+		}
+		return NewAnyBearerTokenVerifier(cognitoVerifier, internalVerifier)
+	default:
+		return nil, fmt.Errorf("unsupported auth mode %q", config.AuthMode)
+	}
 }

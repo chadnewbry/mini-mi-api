@@ -73,6 +73,8 @@ type Config struct {
 	AssetObjectTagging   string
 	AssetStorage         assetStorage
 	JobTimeout           time.Duration
+	AuthMode             string
+	InternalBearerToken  string
 	CognitoIssuer        string
 	CognitoClientID      string
 	CognitoJWKSURL       string
@@ -160,6 +162,8 @@ func LoadConfig() Config {
 		AssetSignedURLTTL:    assetSignedURLTTL,
 		AssetObjectTagging:   strings.TrimSpace(os.Getenv("MINIME_ASSET_OBJECT_TAGGING")),
 		JobTimeout:           jobTimeout,
+		AuthMode:             strings.TrimSpace(os.Getenv("MINIME_AUTH_MODE")),
+		InternalBearerToken:  strings.TrimSpace(os.Getenv("MINIME_INTERNAL_BEARER_TOKEN")),
 		CognitoIssuer:        strings.TrimSpace(os.Getenv("TONGUE_COGNITO_ISSUER")),
 		CognitoClientID:      strings.TrimSpace(os.Getenv("TONGUE_COGNITO_CLIENT_ID")),
 		CognitoJWKSURL:       strings.TrimSpace(os.Getenv("TONGUE_COGNITO_JWKS_URL")),

@@ -184,6 +184,110 @@ func TestLoadConfigParsesCognitoAuthEnv(t *testing.T) {
 	}
 }
 
+func TestLoadConfigParsesInternalAuthEnv(t *testing.T) {
+	t.Setenv("MINIME_AUTH_MODE", "cognito_or_internal")
+	t.Setenv("MINIME_INTERNAL_BEARER_TOKEN", "worker-secret")
+
+	config := LoadConfig()
+	if config.AuthMode != "cognito_or_internal" {
+		t.Fatalf("expected auth mode to be loaded, got %q", config.AuthMode)
+	}
+	if config.InternalBearerToken != "worker-secret" {
+		t.Fatalf("expected internal bearer token to be loaded, got %q", config.InternalBearerToken)
+	}
+}
+
+func TestStaticBearerTokenVerifierAcceptsMatchingToken(t *testing.T) {
+	t.Parallel()
+
+	verifier, err := NewStaticBearerTokenVerifier("worker-secret")
+	if err != nil {
+		t.Fatalf("create verifier: %v", err)
+	}
+
+	if err := verifier.VerifyBearerToken(context.Background(), "worker-secret"); err != nil {
+		t.Fatalf("verify token: %v", err)
+	}
+}
+
+func TestStaticBearerTokenVerifierRejectsInvalidToken(t *testing.T) {
+	t.Parallel()
+
+	verifier, err := NewStaticBearerTokenVerifier("worker-secret")
+	if err != nil {
+		t.Fatalf("create verifier: %v", err)
+	}
+
+	if err := verifier.VerifyBearerToken(context.Background(), "wrong-secret"); !errorsIsUnauthorized(err) {
+		t.Fatalf("expected unauthorized error, got %v", err)
+	}
+}
+
+func TestBearerTokenVerifierForConfigSupportsInternalMode(t *testing.T) {
+	t.Parallel()
+
+	verifier, err := bearerTokenVerifierForConfig(Config{
+		AuthMode:            "internal",
+		InternalBearerToken: "worker-secret",
+	})
+	if err != nil {
+		t.Fatalf("create verifier: %v", err)
+	}
+
+	if err := verifier.VerifyBearerToken(context.Background(), "worker-secret"); err != nil {
+		t.Fatalf("verify token: %v", err)
+	}
+	if err := verifier.VerifyBearerToken(context.Background(), "wrong-secret"); !errorsIsUnauthorized(err) {
+		t.Fatalf("expected unauthorized error, got %v", err)
+	}
+}
+
+func TestBearerTokenVerifierForConfigSupportsCognitoOrInternalMode(t *testing.T) {
+	t.Parallel()
+
+	privateKey := mustGenerateRSAKey(t)
+	kid := "cognito-test-key"
+	clientID := "client-123"
+
+	jwksServer := testCognitoJWKSServer(t, privateKey, kid)
+	issuer := jwksServer.URL
+
+	verifier, err := bearerTokenVerifierForConfig(Config{
+		AuthMode:            "cognito_or_internal",
+		InternalBearerToken: "worker-secret",
+		CognitoIssuer:       issuer,
+		CognitoClientID:     clientID,
+		AuthHTTPClient:      jwksServer.Client(),
+	})
+	if err != nil {
+		t.Fatalf("create verifier: %v", err)
+	}
+
+	cognitoToken := signCognitoJWT(t, privateKey, kid, map[string]any{
+		"iss":       issuer,
+		"token_use": "access",
+		"client_id": clientID,
+		"sub":       "user-123",
+		"exp":       time.Now().UTC().Add(time.Hour).Unix(),
+	})
+
+	if err := verifier.VerifyBearerToken(context.Background(), cognitoToken); err != nil {
+		t.Fatalf("verify cognito token: %v", err)
+	}
+	if err := verifier.VerifyBearerToken(context.Background(), "worker-secret"); err != nil {
+		t.Fatalf("verify internal token: %v", err)
+	}
+}
+
+func TestBearerTokenVerifierForConfigRejectsUnsupportedMode(t *testing.T) {
+	t.Parallel()
+
+	_, err := bearerTokenVerifierForConfig(Config{AuthMode: "nope"})
+	if err == nil || !strings.Contains(err.Error(), "unsupported auth mode") {
+		t.Fatalf("expected unsupported auth mode error, got %v", err)
+	}
+}
+
 func testCognitoJWKSServer(t *testing.T, privateKey *rsa.PrivateKey, kid string) *httptest.Server {
 	t.Helper()
 
