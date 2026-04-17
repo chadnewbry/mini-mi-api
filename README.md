@@ -206,8 +206,9 @@ Use the included deployment files:
 - [docs/render-deployment.md](/Users/chadnewbry/dev/mini-mi-api/docs/render-deployment.md)
 - [docs/aws-internal-deployment.md](/Users/chadnewbry/dev/mini-mi-api/docs/aws-internal-deployment.md)
 
-This deploy shape runs the API and embedded workers together on one Render web service with a persistent disk.
+This deploy shape runs the API and embedded workers together on one Render web service with a persistent disk for scratch workspace files.
 The hosted defaults now use `4` workers with a `20 minute` per-job timeout so one hung generation run does not block the full queue indefinitely.
+Production uses Postgres for session/job state and S3 for source photos, generated Mini Me bases, and generated state assets. The service returns signed S3 URLs in session snapshots when `MINIME_ASSET_BACKEND=s3`.
 
 For app auth, the backend verifies the presented bearer token as a Cognito access token:
 

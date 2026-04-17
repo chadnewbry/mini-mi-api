@@ -31,6 +31,22 @@ services:
         value: postgres
       - key: MINIME_DATABASE_URL
         sync: false
+      - key: MINIME_ASSET_BACKEND
+        value: s3
+      - key: MINIME_ASSET_BUCKET
+        sync: false
+      - key: MINIME_ASSET_REGION
+        value: us-west-2
+      - key: MINIME_ASSET_KEY_PREFIX
+        value: prod
+      - key: MINIME_ASSET_SIGNED_URL_TTL_SECONDS
+        value: "86400"
+      - key: MINIME_ASSET_OBJECT_TAGGING
+        value: app=minime&env=prod
+      - key: MINIME_ASSET_ACCESS_KEY_ID
+        sync: false
+      - key: MINIME_ASSET_SECRET_ACCESS_KEY
+        sync: false
       - key: TONGUE_COGNITO_ISSUER
         sync: false
       - key: TONGUE_COGNITO_CLIENT_ID

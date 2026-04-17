@@ -8,8 +8,8 @@ Why this is the best fit for the current backend:
 
 - the API server and workers can run in one process
 - Render supports Docker-based web services
-- Render supports attaching a persistent disk to that web service
-- the current backend still stores jobs, sessions, and generated assets on local disk
+- Render supports attaching a persistent disk for scratch workspace files
+- production state is externalized to Postgres, and generated/uploaded assets are stored in S3
 
 ## Included Files
 
@@ -20,20 +20,27 @@ Why this is the best fit for the current backend:
 
 - one Docker web service
 - health check at `/healthz`
-- persistent disk mounted at `/data`
+- persistent disk mounted at `/data` for scratch files only
 - embedded workers enabled with `MINIME_RUN_WORKERS=true`
+- `MINIME_STORE_BACKEND=postgres` for session/job state
+- `MINIME_ASSET_BACKEND=s3` for source photos, candidate bases, and generated state assets
 
 ## Required Secrets
 
 Set these in Render before using real generation:
 
+- `MINIME_DATABASE_URL`
+- `MINIME_ASSET_BUCKET`
+- `MINIME_ASSET_ACCESS_KEY_ID`
+- `MINIME_ASSET_SECRET_ACCESS_KEY`
 - `TONGUE_COGNITO_ISSUER`
 - `TONGUE_COGNITO_CLIENT_ID`
-- `TONGUE_COGNITO_JWKS_URL`
 - `GEMINI_API_KEY`
 - `XAI_API_KEY`
 
-You can add others later if you change the generation stack.
+`TONGUE_COGNITO_JWKS_URL` is optional; when omitted, the service derives it from `TONGUE_COGNITO_ISSUER`.
+
+The S3 credentials should belong to a least-privilege IAM principal that can only read and write the configured Mini Me bucket/prefix. The production service currently uses private S3 objects and returns signed URLs in session snapshots.
 
 ## Deploy Flow
 
@@ -61,10 +68,7 @@ That is the URL the Mac app should use as `TONGUE_MINIME_BASE_URL`.
 
 This deploy shape is intentionally pragmatic, not final:
 
-- local-disk persistence only
 - single-service architecture
-- no Postgres
-- no object storage
 - no queue service
 
-It is the fastest path to a real hosted backend URL for shipped users.
+It is still a single hosted web service, but durable state and asset bytes no longer depend on Render local disk.
