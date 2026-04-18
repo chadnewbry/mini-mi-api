@@ -66,6 +66,8 @@ Default settings:
   - required when `MINIME_SCRIPT_RUNNER_MODE=remote`
 - `MINIME_SCRIPT_RUNNER_TOKEN`
   - optional bearer token sent to the remote script runner
+- `MINIME_SCRIPT_RUNNER_SHARED_WORKSPACE`
+  - required when `MINIME_SCRIPT_RUNNER_MODE=remote`; the API and remote runner must share the same filesystem workspace for generated files
 - `MINIME_STORE_BACKEND`
   - supported values: `file` (default) and `postgres`
 - `MINIME_DATABASE_URL`
@@ -138,6 +140,7 @@ go run ./cmd/minime-server
 ```
 
 When enabled, Mini Me keeps its API/session flow unchanged but forwards script execution to `POST /v1/minime/scripts:run` on Tongue API. This is reversible by switching back to `MINIME_SCRIPT_RUNNER_MODE=local`.
+Remote runner mode currently assumes a shared workspace between the API and the runner process. Set `MINIME_SCRIPT_RUNNER_SHARED_WORKSPACE=true` only when both sides can read and write the same session workspace paths.
 
 ## Internal Worker Mode
 

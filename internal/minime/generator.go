@@ -17,10 +17,11 @@ type Generator interface {
 }
 
 type GenerationEnvironment struct {
-	DataRoot        string
-	CloneAsset      func(sessionID string, source *assetRecord, subdirectory, fileName string) (*assetRecord, error)
-	ImportFile      func(sessionID, subdirectory, filePath string) (*assetRecord, error)
-	PublishProgress func(session *sessionRecord) error
+	DataRoot            string
+	CloneAsset          func(sessionID string, source *assetRecord, subdirectory, fileName string) (*assetRecord, error)
+	ImportFile          func(sessionID, subdirectory, filePath string) (*assetRecord, error)
+	StageWorkspaceAsset func(sessionID string, asset *assetRecord, subdirectory string) (string, error)
+	PublishProgress     func(session *sessionRecord) error
 }
 
 type PlaceholderGenerator struct{}

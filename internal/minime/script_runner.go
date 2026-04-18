@@ -147,6 +147,9 @@ func scriptRunnerForConfig(config Config) (ScriptRunner, error) {
 		if strings.TrimSpace(config.ScriptRunnerURL) == "" {
 			return nil, fmt.Errorf("MINIME_SCRIPT_RUNNER_URL is required when MINIME_SCRIPT_RUNNER_MODE=remote")
 		}
+		if !config.ScriptRunnerSharedWorkspace {
+			return nil, fmt.Errorf("MINIME_SCRIPT_RUNNER_SHARED_WORKSPACE=true is required when MINIME_SCRIPT_RUNNER_MODE=remote; this server does not fetch generated workspace files back from the remote runner")
+		}
 		return RemoteScriptRunner{
 			BaseURL:   config.ScriptRunnerURL,
 			AuthToken: config.ScriptRunnerToken,

@@ -43,46 +43,47 @@ var allowedStates = func() map[string]struct{} {
 }()
 
 type Config struct {
-	Port                 string
-	DataRoot             string
-	WorkerCount          int
-	RunWorkers           bool
-	WorkerPollInterval   time.Duration
-	Generator            Generator
-	GeneratorMode        string
-	RepoRoot             string
-	ImageGeneratorScript string
-	PythonExecutable     string
-	StatePipelineScript  string
-	ScriptRunnerMode     string
-	ScriptRunnerURL      string
-	ScriptRunnerToken    string
-	StoreBackend         string
-	DatabaseURL          string
-	StoreTable           string
-	AssetBackend         string
-	AssetBucket          string
-	AssetRegion          string
-	AssetEndpoint        string
-	AssetAccessKeyID     string
-	AssetSecretAccessKey string
-	AssetSessionToken    string
-	AssetForcePathStyle  bool
-	AssetKeyPrefix       string
-	AssetSignedURLTTL    time.Duration
-	AssetObjectTagging   string
-	AssetStorage         assetStorage
-	JobTimeout           time.Duration
-	AuthMode             string
-	InternalBearerToken  string
-	CognitoIssuer        string
-	CognitoClientID      string
-	CognitoJWKSURL       string
-	AuthHTTPClient       *http.Client
-	AuthVerifier         BearerTokenVerifier
-	TongueAPIBaseURL     string
-	TongueInternalToken  string
-	TongueAPIHTTPClient  *http.Client
+	Port                        string
+	DataRoot                    string
+	WorkerCount                 int
+	RunWorkers                  bool
+	WorkerPollInterval          time.Duration
+	Generator                   Generator
+	GeneratorMode               string
+	RepoRoot                    string
+	ImageGeneratorScript        string
+	PythonExecutable            string
+	StatePipelineScript         string
+	ScriptRunnerMode            string
+	ScriptRunnerURL             string
+	ScriptRunnerToken           string
+	ScriptRunnerSharedWorkspace bool
+	StoreBackend                string
+	DatabaseURL                 string
+	StoreTable                  string
+	AssetBackend                string
+	AssetBucket                 string
+	AssetRegion                 string
+	AssetEndpoint               string
+	AssetAccessKeyID            string
+	AssetSecretAccessKey        string
+	AssetSessionToken           string
+	AssetForcePathStyle         bool
+	AssetKeyPrefix              string
+	AssetSignedURLTTL           time.Duration
+	AssetObjectTagging          string
+	AssetStorage                assetStorage
+	JobTimeout                  time.Duration
+	AuthMode                    string
+	InternalBearerToken         string
+	CognitoIssuer               string
+	CognitoClientID             string
+	CognitoJWKSURL              string
+	AuthHTTPClient              *http.Client
+	AuthVerifier                BearerTokenVerifier
+	TongueAPIBaseURL            string
+	TongueInternalToken         string
+	TongueAPIHTTPClient         *http.Client
 }
 
 func LoadConfig() Config {
@@ -137,41 +138,42 @@ func LoadConfig() Config {
 	}
 
 	return Config{
-		Port:                 port,
-		DataRoot:             dataRoot,
-		WorkerCount:          workerCount,
-		RunWorkers:           runWorkers,
-		WorkerPollInterval:   workerPollInterval,
-		GeneratorMode:        strings.TrimSpace(os.Getenv("MINIME_GENERATOR_MODE")),
-		RepoRoot:             strings.TrimSpace(os.Getenv("MINIME_REPO_ROOT")),
-		ImageGeneratorScript: strings.TrimSpace(os.Getenv("MINIME_IMAGE_GENERATOR_SCRIPT")),
-		PythonExecutable:     strings.TrimSpace(os.Getenv("MINIME_PYTHON_EXECUTABLE")),
-		StatePipelineScript:  strings.TrimSpace(os.Getenv("MINIME_STATE_PIPELINE_SCRIPT")),
-		ScriptRunnerMode:     strings.TrimSpace(os.Getenv("MINIME_SCRIPT_RUNNER_MODE")),
-		ScriptRunnerURL:      strings.TrimSpace(os.Getenv("MINIME_SCRIPT_RUNNER_URL")),
-		ScriptRunnerToken:    strings.TrimSpace(os.Getenv("MINIME_SCRIPT_RUNNER_TOKEN")),
-		StoreBackend:         strings.TrimSpace(os.Getenv("MINIME_STORE_BACKEND")),
-		DatabaseURL:          firstNonEmptyEnv("MINIME_DATABASE_URL", "DATABASE_URL"),
-		StoreTable:           strings.TrimSpace(os.Getenv("MINIME_STORE_TABLE")),
-		AssetBackend:         strings.TrimSpace(os.Getenv("MINIME_ASSET_BACKEND")),
-		AssetBucket:          strings.TrimSpace(os.Getenv("MINIME_ASSET_BUCKET")),
-		AssetRegion:          strings.TrimSpace(os.Getenv("MINIME_ASSET_REGION")),
-		AssetEndpoint:        strings.TrimSpace(os.Getenv("MINIME_ASSET_ENDPOINT")),
-		AssetAccessKeyID:     strings.TrimSpace(os.Getenv("MINIME_ASSET_ACCESS_KEY_ID")),
-		AssetSecretAccessKey: strings.TrimSpace(os.Getenv("MINIME_ASSET_SECRET_ACCESS_KEY")),
-		AssetSessionToken:    strings.TrimSpace(os.Getenv("MINIME_ASSET_SESSION_TOKEN")),
-		AssetForcePathStyle:  parseBoolEnv("MINIME_ASSET_FORCE_PATH_STYLE"),
-		AssetKeyPrefix:       strings.TrimSpace(os.Getenv("MINIME_ASSET_KEY_PREFIX")),
-		AssetSignedURLTTL:    assetSignedURLTTL,
-		AssetObjectTagging:   strings.TrimSpace(os.Getenv("MINIME_ASSET_OBJECT_TAGGING")),
-		JobTimeout:           jobTimeout,
-		AuthMode:             strings.TrimSpace(os.Getenv("MINIME_AUTH_MODE")),
-		InternalBearerToken:  strings.TrimSpace(os.Getenv("MINIME_INTERNAL_BEARER_TOKEN")),
-		CognitoIssuer:        strings.TrimSpace(os.Getenv("TONGUE_COGNITO_ISSUER")),
-		CognitoClientID:      strings.TrimSpace(os.Getenv("TONGUE_COGNITO_CLIENT_ID")),
-		CognitoJWKSURL:       strings.TrimSpace(os.Getenv("TONGUE_COGNITO_JWKS_URL")),
-		TongueAPIBaseURL:     firstNonEmptyEnv("TONGUE_API_INTERNAL_BASE_URL", "TONGUE_API_BASE_URL"),
-		TongueInternalToken:  firstNonEmptyEnv("TONGUE_INTERNAL_SERVICE_TOKEN", "TONGUE_API_INTERNAL_TOKEN"),
+		Port:                        port,
+		DataRoot:                    dataRoot,
+		WorkerCount:                 workerCount,
+		RunWorkers:                  runWorkers,
+		WorkerPollInterval:          workerPollInterval,
+		GeneratorMode:               strings.TrimSpace(os.Getenv("MINIME_GENERATOR_MODE")),
+		RepoRoot:                    strings.TrimSpace(os.Getenv("MINIME_REPO_ROOT")),
+		ImageGeneratorScript:        strings.TrimSpace(os.Getenv("MINIME_IMAGE_GENERATOR_SCRIPT")),
+		PythonExecutable:            strings.TrimSpace(os.Getenv("MINIME_PYTHON_EXECUTABLE")),
+		StatePipelineScript:         strings.TrimSpace(os.Getenv("MINIME_STATE_PIPELINE_SCRIPT")),
+		ScriptRunnerMode:            strings.TrimSpace(os.Getenv("MINIME_SCRIPT_RUNNER_MODE")),
+		ScriptRunnerURL:             strings.TrimSpace(os.Getenv("MINIME_SCRIPT_RUNNER_URL")),
+		ScriptRunnerToken:           strings.TrimSpace(os.Getenv("MINIME_SCRIPT_RUNNER_TOKEN")),
+		ScriptRunnerSharedWorkspace: parseBoolEnv("MINIME_SCRIPT_RUNNER_SHARED_WORKSPACE"),
+		StoreBackend:                strings.TrimSpace(os.Getenv("MINIME_STORE_BACKEND")),
+		DatabaseURL:                 firstNonEmptyEnv("MINIME_DATABASE_URL", "DATABASE_URL"),
+		StoreTable:                  strings.TrimSpace(os.Getenv("MINIME_STORE_TABLE")),
+		AssetBackend:                strings.TrimSpace(os.Getenv("MINIME_ASSET_BACKEND")),
+		AssetBucket:                 strings.TrimSpace(os.Getenv("MINIME_ASSET_BUCKET")),
+		AssetRegion:                 strings.TrimSpace(os.Getenv("MINIME_ASSET_REGION")),
+		AssetEndpoint:               strings.TrimSpace(os.Getenv("MINIME_ASSET_ENDPOINT")),
+		AssetAccessKeyID:            strings.TrimSpace(os.Getenv("MINIME_ASSET_ACCESS_KEY_ID")),
+		AssetSecretAccessKey:        strings.TrimSpace(os.Getenv("MINIME_ASSET_SECRET_ACCESS_KEY")),
+		AssetSessionToken:           strings.TrimSpace(os.Getenv("MINIME_ASSET_SESSION_TOKEN")),
+		AssetForcePathStyle:         parseBoolEnv("MINIME_ASSET_FORCE_PATH_STYLE"),
+		AssetKeyPrefix:              strings.TrimSpace(os.Getenv("MINIME_ASSET_KEY_PREFIX")),
+		AssetSignedURLTTL:           assetSignedURLTTL,
+		AssetObjectTagging:          strings.TrimSpace(os.Getenv("MINIME_ASSET_OBJECT_TAGGING")),
+		JobTimeout:                  jobTimeout,
+		AuthMode:                    strings.TrimSpace(os.Getenv("MINIME_AUTH_MODE")),
+		InternalBearerToken:         strings.TrimSpace(os.Getenv("MINIME_INTERNAL_BEARER_TOKEN")),
+		CognitoIssuer:               strings.TrimSpace(os.Getenv("TONGUE_COGNITO_ISSUER")),
+		CognitoClientID:             strings.TrimSpace(os.Getenv("TONGUE_COGNITO_CLIENT_ID")),
+		CognitoJWKSURL:              strings.TrimSpace(os.Getenv("TONGUE_COGNITO_JWKS_URL")),
+		TongueAPIBaseURL:            firstNonEmptyEnv("TONGUE_API_INTERNAL_BASE_URL", "TONGUE_API_BASE_URL"),
+		TongueInternalToken:         firstNonEmptyEnv("TONGUE_INTERNAL_SERVICE_TOKEN", "TONGUE_API_INTERNAL_TOKEN"),
 	}
 }
 
@@ -433,6 +435,7 @@ func (s *Server) Handler() http.Handler {
 
 func (s *Server) routes() {
 	s.mux.HandleFunc("/healthz", s.handleHealth)
+	s.mux.HandleFunc("/v1/minime/session", s.handleCurrentSession)
 	s.mux.HandleFunc("/v1/minime/sessions", s.handleSessions)
 	s.mux.HandleFunc("/v1/minime/sessions/", s.handleSessionRoutes)
 	s.mux.HandleFunc("/v1/minime/states:generate", s.handleStatelessGenerateStates)
@@ -446,6 +449,30 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleCurrentSession(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	s.mu.Lock()
+	if err := s.syncStoreLocked(); err != nil {
+		s.mu.Unlock()
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	session := s.currentSessionLocked()
+	if session == nil {
+		s.mu.Unlock()
+		writeError(w, http.StatusNotFound, "current session not found")
+		return
+	}
+	snapshot := s.snapshotForSession(r, session)
+	s.mu.Unlock()
+
+	writeJSON(w, http.StatusOK, snapshot)
 }
 
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
@@ -501,6 +528,31 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 
 	writeJSON(w, http.StatusCreated, snapshot)
+}
+
+func (s *Server) currentSessionLocked() *sessionRecord {
+	var current *sessionRecord
+	for _, session := range s.sessions {
+		if session == nil {
+			continue
+		}
+		if current == nil {
+			current = session
+			continue
+		}
+		if session.UpdatedAt.After(current.UpdatedAt) {
+			current = session
+			continue
+		}
+		if session.UpdatedAt.Equal(current.UpdatedAt) && session.CreatedAt.After(current.CreatedAt) {
+			current = session
+			continue
+		}
+		if session.UpdatedAt.Equal(current.UpdatedAt) && session.CreatedAt.Equal(current.CreatedAt) && session.ID > current.ID {
+			current = session
+		}
+	}
+	return current
 }
 
 func (s *Server) handleSessionRoutes(w http.ResponseWriter, r *http.Request) {
@@ -1196,6 +1248,9 @@ func (s *Server) generationEnvironment() GenerationEnvironment {
 			}
 			return asset, nil
 		},
+		StageWorkspaceAsset: func(sessionID string, asset *assetRecord, subdirectory string) (string, error) {
+			return s.stageWorkspaceAsset(sessionID, asset, subdirectory)
+		},
 		PublishProgress: func(progress *sessionRecord) error {
 			s.mu.Lock()
 			if err := s.syncStoreLocked(); err != nil {
@@ -1230,6 +1285,43 @@ func (s *Server) generationEnvironment() GenerationEnvironment {
 			return nil
 		},
 	}
+}
+
+func (s *Server) stageWorkspaceAsset(sessionID string, asset *assetRecord, subdirectory string) (string, error) {
+	if asset == nil {
+		return "", nil
+	}
+
+	workspaceDirectory := filepath.Join(s.config.DataRoot, sessionID, "workspace", subdirectory)
+	if err := os.MkdirAll(workspaceDirectory, 0o755); err != nil {
+		return "", fmt.Errorf("create workspace asset directory: %w", err)
+	}
+
+	fileName := asset.FileName
+	if strings.TrimSpace(fileName) == "" {
+		fileName = asset.ID
+	}
+	stagedPath := filepath.Join(workspaceDirectory, asset.ID+"-"+fileName)
+	if _, err := os.Stat(stagedPath); err == nil {
+		return stagedPath, nil
+	}
+
+	input, err := s.openAssetLocked(asset)
+	if err != nil {
+		return "", err
+	}
+	defer input.Close()
+
+	output, err := os.Create(stagedPath)
+	if err != nil {
+		return "", fmt.Errorf("create staged asset file: %w", err)
+	}
+	defer output.Close()
+
+	if _, err := io.Copy(output, input); err != nil {
+		return "", fmt.Errorf("write staged asset file: %w", err)
+	}
+	return stagedPath, nil
 }
 
 func (s *Server) importFileLocked(sessionID, subdirectory, filePath string) (*assetRecord, error) {

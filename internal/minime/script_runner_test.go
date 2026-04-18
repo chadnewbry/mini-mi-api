@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -26,6 +27,21 @@ func TestScriptRunnerForConfigRemoteRequiresURL(t *testing.T) {
 	_, err := scriptRunnerForConfig(Config{ScriptRunnerMode: "remote"})
 	if err == nil {
 		t.Fatal("expected missing url error")
+	}
+}
+
+func TestScriptRunnerForConfigRemoteRequiresSharedWorkspace(t *testing.T) {
+	t.Parallel()
+
+	_, err := scriptRunnerForConfig(Config{
+		ScriptRunnerMode: "remote",
+		ScriptRunnerURL:  "https://tongue-api.example.com",
+	})
+	if err == nil {
+		t.Fatal("expected shared workspace error")
+	}
+	if !strings.Contains(err.Error(), "MINIME_SCRIPT_RUNNER_SHARED_WORKSPACE=true") {
+		t.Fatalf("expected shared workspace guidance, got %v", err)
 	}
 }
 

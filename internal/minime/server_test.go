@@ -253,6 +253,38 @@ func TestCreateSessionPersistsToDisk(t *testing.T) {
 	}
 }
 
+func TestGetCurrentSessionReturnsLatestSession(t *testing.T) {
+	t.Parallel()
+
+	server := newTestServer(t)
+	createRecorder := performRequest(t, server.Handler(), http.MethodPost, "/v1/minime/sessions", `{}`)
+	if createRecorder.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusCreated, createRecorder.Code, createRecorder.Body.String())
+	}
+	var created remoteSessionSnapshot
+	decodeJSON(t, createRecorder, &created)
+
+	currentRecorder := performRequest(t, server.Handler(), http.MethodGet, "/v1/minime/session", "")
+	if currentRecorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, currentRecorder.Code, currentRecorder.Body.String())
+	}
+	var current remoteSessionSnapshot
+	decodeJSON(t, currentRecorder, &current)
+	if current.SessionID != created.SessionID {
+		t.Fatalf("expected current session %q, got %q", created.SessionID, current.SessionID)
+	}
+}
+
+func TestGetCurrentSessionReturnsNotFoundWhenEmpty(t *testing.T) {
+	t.Parallel()
+
+	server := newTestServer(t)
+	recorder := performRequest(t, server.Handler(), http.MethodGet, "/v1/minime/session", "")
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusNotFound, recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestNewServerUsesScriptGeneratorMode(t *testing.T) {
 	t.Parallel()
 
@@ -292,13 +324,14 @@ func TestNewServerUsesRemoteScriptRunnerMode(t *testing.T) {
 	t.Parallel()
 
 	server, err := NewServer(Config{
-		Port:              "0",
-		DataRoot:          t.TempDir(),
-		AuthVerifier:      staticAuthVerifier{acceptedToken: "test-token"},
-		GeneratorMode:     "script",
-		ScriptRunnerMode:  "remote",
-		ScriptRunnerURL:   "https://tongue-api.example.com",
-		ScriptRunnerToken: "token-123",
+		Port:                        "0",
+		DataRoot:                    t.TempDir(),
+		AuthVerifier:                staticAuthVerifier{acceptedToken: "test-token"},
+		GeneratorMode:               "script",
+		ScriptRunnerMode:            "remote",
+		ScriptRunnerURL:             "https://tongue-api.example.com",
+		ScriptRunnerToken:           "token-123",
+		ScriptRunnerSharedWorkspace: true,
 	})
 	if err != nil {
 		t.Fatalf("create server: %v", err)
@@ -1512,6 +1545,123 @@ func TestScriptGeneratorGeneratesStatesViaScript(t *testing.T) {
 		if finalDownloadRecorder.Code != http.StatusOK {
 			t.Fatalf("expected status %d for final asset download, got %d: %s", http.StatusOK, finalDownloadRecorder.Code, finalDownloadRecorder.Body.String())
 		}
+	}
+}
+
+func TestScriptGeneratorStagesS3AssetsIntoWorkspace(t *testing.T) {
+	t.Parallel()
+
+	repoRoot := findRepoRoot(t)
+	dataRoot := t.TempDir()
+	fakeGeneratorScript := writeFakeImageGeneratorScript(t)
+	fakeStatePipelineScript := writeFakeStatePipelineScript(t)
+	server, err := NewServer(Config{
+		Port:         "0",
+		DataRoot:     dataRoot,
+		AuthVerifier: staticAuthVerifier{acceptedToken: "test-token"},
+		AssetBackend: "s3",
+		AssetStorage: &fakeAssetStorage{},
+		Generator: ScriptGenerator{
+			RepoRoot:             repoRoot,
+			ImageGeneratorScript: fakeGeneratorScript,
+			StatePipelineScript:  fakeStatePipelineScript,
+		},
+	})
+	if err != nil {
+		t.Fatalf("create server: %v", err)
+	}
+
+	createRecorder := performRequest(t, server.Handler(), http.MethodPost, "/v1/minime/sessions", `{}`)
+	var created remoteSessionSnapshot
+	decodeJSON(t, createRecorder, &created)
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	part, err := writer.CreateFormFile("photos", "portrait.png")
+	if err != nil {
+		t.Fatalf("create multipart file: %v", err)
+	}
+	if _, err := part.Write(minimalPNG); err != nil {
+		t.Fatalf("write multipart file: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	uploadRequest := httptest.NewRequest(http.MethodPost, "/v1/minime/sessions/"+created.SessionID+"/photos", body)
+	uploadRequest.Header.Set("Authorization", "Bearer test-token")
+	uploadRequest.Header.Set("Content-Type", writer.FormDataContentType())
+	uploadRecorder := httptest.NewRecorder()
+	server.Handler().ServeHTTP(uploadRecorder, uploadRequest)
+	if uploadRecorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, uploadRecorder.Code, uploadRecorder.Body.String())
+	}
+
+	candidateRecorder := performRequest(t, server.Handler(), http.MethodPost, "/v1/minime/sessions/"+created.SessionID+"/candidates:generate", `{}`)
+	if candidateRecorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, candidateRecorder.Code, candidateRecorder.Body.String())
+	}
+	candidateJobID := candidateRecorder.Header().Get("X-MiniMe-Job-ID")
+	if candidateJobID == "" {
+		t.Fatal("expected X-MiniMe-Job-ID header for candidate generation")
+	}
+	if job := waitForJobTerminal(t, server, candidateJobID); job.Status != "completed" {
+		t.Fatalf("expected completed candidate job, got %q", job.Status)
+	}
+
+	workspaceRoot := filepath.Join(dataRoot, created.SessionID, "workspace")
+	manifestPath := filepath.Join(workspaceRoot, "manifest.json")
+	manifestData, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("read workspace manifest: %v", err)
+	}
+	var manifest scriptManifest
+	if err := json.Unmarshal(manifestData, &manifest); err != nil {
+		t.Fatalf("decode workspace manifest: %v", err)
+	}
+	if len(manifest.SourcePhotoPaths) != 1 {
+		t.Fatalf("expected one staged source photo path, got %d", len(manifest.SourcePhotoPaths))
+	}
+	if !strings.HasPrefix(manifest.SourcePhotoPaths[0], workspaceRoot) {
+		t.Fatalf("expected staged source photo in workspace, got %q", manifest.SourcePhotoPaths[0])
+	}
+	if _, err := os.Stat(manifest.SourcePhotoPaths[0]); err != nil {
+		t.Fatalf("expected staged source photo to exist: %v", err)
+	}
+
+	stateRecorder := performRequest(
+		t,
+		server.Handler(),
+		http.MethodPost,
+		"/v1/minime/sessions/"+created.SessionID+"/states:generate",
+		`{"states":["idle-day","working"]}`,
+	)
+	if stateRecorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, stateRecorder.Code, stateRecorder.Body.String())
+	}
+	stateJobID := stateRecorder.Header().Get("X-MiniMe-Job-ID")
+	if stateJobID == "" {
+		t.Fatal("expected X-MiniMe-Job-ID header for state generation")
+	}
+	if job := waitForJobTerminal(t, server, stateJobID); job.Status != "completed" {
+		t.Fatalf("expected completed state job, got %q", job.Status)
+	}
+
+	manifestData, err = os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("read updated workspace manifest: %v", err)
+	}
+	if err := json.Unmarshal(manifestData, &manifest); err != nil {
+		t.Fatalf("decode updated workspace manifest: %v", err)
+	}
+	if manifest.SelectedCandidatePath == "" {
+		t.Fatal("expected staged selected candidate path")
+	}
+	if !strings.HasPrefix(manifest.SelectedCandidatePath, workspaceRoot) {
+		t.Fatalf("expected staged selected candidate in workspace, got %q", manifest.SelectedCandidatePath)
+	}
+	if _, err := os.Stat(manifest.SelectedCandidatePath); err != nil {
+		t.Fatalf("expected staged selected candidate to exist: %v", err)
 	}
 }
 

@@ -212,10 +212,23 @@ func (g ScriptGenerator) syncSessionToWorkspace(ctx context.Context, env Generat
 		return scriptManifest{}, "", err
 	}
 
-	manifest.SourcePhotoPaths = assetPaths(session.SourcePhotos)
-	manifest.CandidateImagePaths = assetPaths(session.Candidates)
-	manifest.SelectedSourcePhotoPath = assetPathByID(session.SourcePhotos, session.SelectedSourcePhotoID)
-	manifest.SelectedCandidatePath = assetPathByID(session.Candidates, session.SelectedCandidateID)
+	var stageErr error
+	manifest.SourcePhotoPaths, stageErr = stageWorkspaceAssetPaths(env, session.ID, session.SourcePhotos, "source-photos")
+	if stageErr != nil {
+		return scriptManifest{}, "", stageErr
+	}
+	manifest.CandidateImagePaths, stageErr = stageWorkspaceAssetPaths(env, session.ID, session.Candidates, "candidate-renders")
+	if stageErr != nil {
+		return scriptManifest{}, "", stageErr
+	}
+	manifest.SelectedSourcePhotoPath, stageErr = stageWorkspaceAssetPathByID(env, session.ID, session.SourcePhotos, session.SelectedSourcePhotoID, "source-photos")
+	if stageErr != nil {
+		return scriptManifest{}, "", stageErr
+	}
+	manifest.SelectedCandidatePath, stageErr = stageWorkspaceAssetPathByID(env, session.ID, session.Candidates, session.SelectedCandidateID, "candidate-renders")
+	if stageErr != nil {
+		return scriptManifest{}, "", stageErr
+	}
 	if manifest.StateAssetPaths == nil {
 		manifest.StateAssetPaths = map[string]string{}
 	}
@@ -467,20 +480,34 @@ func writeScriptManifest(path string, manifest scriptManifest) error {
 	return os.WriteFile(path, append(data, '\n'), 0o644)
 }
 
-func assetPaths(assets []*assetRecord) []string {
+func stageWorkspaceAssetPaths(env GenerationEnvironment, sessionID string, assets []*assetRecord, subdirectory string) ([]string, error) {
 	paths := make([]string, 0, len(assets))
 	for _, asset := range assets {
-		if asset != nil && asset.FilePath != "" {
-			paths = append(paths, asset.FilePath)
+		path, err := stageWorkspaceAssetPath(env, sessionID, asset, subdirectory)
+		if err != nil {
+			return nil, err
+		}
+		if path != "" {
+			paths = append(paths, path)
 		}
 	}
-	return paths
+	return paths, nil
 }
 
-func assetPathByID(assets []*assetRecord, assetID string) string {
+func stageWorkspaceAssetPathByID(env GenerationEnvironment, sessionID string, assets []*assetRecord, assetID, subdirectory string) (string, error) {
 	asset := findAssetByID(assets, assetID)
 	if asset == nil {
-		return ""
+		return "", nil
 	}
-	return asset.FilePath
+	return stageWorkspaceAssetPath(env, sessionID, asset, subdirectory)
+}
+
+func stageWorkspaceAssetPath(env GenerationEnvironment, sessionID string, asset *assetRecord, subdirectory string) (string, error) {
+	if asset == nil {
+		return "", nil
+	}
+	if env.StageWorkspaceAsset != nil {
+		return env.StageWorkspaceAsset(sessionID, asset, subdirectory)
+	}
+	return asset.FilePath, nil
 }
