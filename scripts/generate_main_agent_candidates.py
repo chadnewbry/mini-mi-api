@@ -66,16 +66,35 @@ def should_retry(output: str) -> bool:
 
 def run_with_backoff(
     command: list[str],
-    max_attempts: int = 6,
-    initial_backoff_seconds: int = 45,
+    max_attempts: int = 3,
+    initial_backoff_seconds: int = 5,
     backoff_multiplier: float = 2.0,
-    max_backoff_seconds: int = 1800,
+    max_backoff_seconds: int = 30,
+    subprocess_timeout_seconds: int = 80,
 ) -> subprocess.CompletedProcess[str]:
     attempt = 0
     delay = max(1, initial_backoff_seconds)
     while True:
         attempt += 1
-        completed = subprocess.run(command, text=True, capture_output=True, check=False)
+        try:
+            completed = subprocess.run(
+                command, text=True, capture_output=True, check=False,
+                timeout=subprocess_timeout_seconds,
+            )
+        except subprocess.TimeoutExpired:
+            print(
+                f"Image generation subprocess timed out after {subprocess_timeout_seconds}s (attempt {attempt}).",
+                file=sys.stderr,
+            )
+            if attempt >= max_attempts:
+                return subprocess.CompletedProcess(
+                    command, returncode=1, stdout="",
+                    stderr=f"image generation timed out after {subprocess_timeout_seconds}s",
+                )
+            print(f"Retrying after {delay}s.", file=sys.stderr)
+            time.sleep(delay)
+            delay = min(max_backoff_seconds, max(1, int(delay * backoff_multiplier)))
+            continue
         combined = f"{completed.stdout}\n{completed.stderr}"
         if completed.returncode == 0:
             return completed
