@@ -605,9 +605,43 @@ func (s *Server) handleSessionRoutes(w http.ResponseWriter, r *http.Request) {
 		s.handleCandidateSelection(w, r, session)
 	case "states:generate":
 		s.handleGenerateStates(w, r, session)
+	case "jobs":
+		s.handleCancelSessionJobs(w, r, session)
 	default:
 		writeError(w, http.StatusNotFound, "unknown session action")
 	}
+}
+
+// handleCancelSessionJobs handles DELETE /v1/minime/sessions/{id}/jobs.
+// It immediately fails every queued or running job for the session so the
+// client can start a fresh generation without waiting for the sweeper.
+func (s *Server) handleCancelSessionJobs(w http.ResponseWriter, r *http.Request, session *sessionRecord) {
+	if r.Method != http.MethodDelete {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.syncStoreLocked(); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	cancelErr := errors.New("cancelled by client")
+	var cancelled int
+	for _, job := range s.jobs {
+		if job.SessionID != session.ID {
+			continue
+		}
+		if job.Status != "queued" && job.Status != "running" {
+			continue
+		}
+		s.failJobLocked(job, cancelErr)
+		cancelled++
+	}
+	if cancelled > 0 {
+		_ = s.persistStoreLocked()
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"cancelled": cancelled})
 }
 
 func (s *Server) handleJobRoutes(w http.ResponseWriter, r *http.Request) {
