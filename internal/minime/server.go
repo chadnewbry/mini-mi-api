@@ -74,6 +74,7 @@ type Config struct {
 	AssetObjectTagging          string
 	AssetStorage                assetStorage
 	JobTimeout                  time.Duration
+	StuckJobTimeout             time.Duration
 	AuthMode                    string
 	InternalBearerToken         string
 	CognitoIssuer               string
@@ -129,6 +130,17 @@ func LoadConfig() Config {
 		}
 	}
 
+	// StuckJobTimeout: how long a job may sit in "running" state before the
+	// sweeper marks it failed. Defaults to JobTimeout so the two limits are
+	// consistent. Override with MINIME_STUCK_JOB_TIMEOUT_SECONDS.
+	stuckJobTimeout := jobTimeout
+	if rawStuck := strings.TrimSpace(os.Getenv("MINIME_STUCK_JOB_TIMEOUT_SECONDS")); rawStuck != "" {
+		parsedStuck, err := strconv.Atoi(rawStuck)
+		if err == nil && parsedStuck > 0 {
+			stuckJobTimeout = time.Duration(parsedStuck) * time.Second
+		}
+	}
+
 	assetSignedURLTTL := 15 * time.Minute
 	if rawSignedURLTTL := strings.TrimSpace(os.Getenv("MINIME_ASSET_SIGNED_URL_TTL_SECONDS")); rawSignedURLTTL != "" {
 		parsedSignedURLTTL, err := strconv.Atoi(rawSignedURLTTL)
@@ -167,6 +179,7 @@ func LoadConfig() Config {
 		AssetSignedURLTTL:           assetSignedURLTTL,
 		AssetObjectTagging:          strings.TrimSpace(os.Getenv("MINIME_ASSET_OBJECT_TAGGING")),
 		JobTimeout:                  jobTimeout,
+		StuckJobTimeout:             stuckJobTimeout,
 		AuthMode:                    strings.TrimSpace(os.Getenv("MINIME_AUTH_MODE")),
 		InternalBearerToken:         strings.TrimSpace(os.Getenv("MINIME_INTERNAL_BEARER_TOKEN")),
 		CognitoIssuer:               strings.TrimSpace(os.Getenv("TONGUE_COGNITO_ISSUER")),
@@ -1519,6 +1532,7 @@ func (s *Server) startWorkers() {
 		go s.runWorker()
 	}
 	go s.pollForQueuedJobs()
+	go s.sweepStuckJobs()
 }
 
 func (s *Server) runWorker() {
@@ -1564,6 +1578,38 @@ func (s *Server) scanQueuedJobs() {
 		}
 		s.queuedJobIDs[job.ID] = struct{}{}
 		s.workQueue <- job.ID
+	}
+}
+
+// sweepStuckJobs runs every minute and fails any job that has been in the
+// "running" state longer than StuckJobTimeout. This recovers from mid-run
+// server restarts where the process died after marking a job "running" but
+// before it could update the status to "failed".
+func (s *Server) sweepStuckJobs() {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for range ticker.C {
+		s.mu.Lock()
+		if err := s.syncStoreLocked(); err != nil {
+			s.mu.Unlock()
+			continue
+		}
+		now := time.Now().UTC()
+		var dirty bool
+		for _, job := range s.jobs {
+			if job.Status != "running" {
+				continue
+			}
+			if now.Sub(job.UpdatedAt) < s.config.StuckJobTimeout {
+				continue
+			}
+			s.failJobLocked(job, fmt.Errorf("job exceeded stuck-job timeout of %s", s.config.StuckJobTimeout))
+			dirty = true
+		}
+		if dirty {
+			_ = s.persistStoreLocked()
+		}
+		s.mu.Unlock()
 	}
 }
 
