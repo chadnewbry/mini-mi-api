@@ -30,7 +30,7 @@ GENERATOR_SCRIPT = Path(
         DEFAULT_REPO_ROOT / "scripts" / "generate_image.py",
     )
 ).resolve()
-RETRY_MARKERS = ["429", "rate limit", "resource_exhausted", "unavailable", "503"]
+RETRY_MARKERS = ["429", "rate limit", "resource_exhausted", "unavailable", "503", "timed out", "timeout"]
 
 
 def parse_args() -> argparse.Namespace:

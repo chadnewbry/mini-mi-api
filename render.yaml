@@ -57,6 +57,8 @@ services:
         sync: false
       - key: GEMINI_API_KEY
         sync: false
+      - key: GEMINI_IMAGE_MODEL
+        value: gemini-3.1-flash-image-preview
       - key: XAI_API_KEY
         sync: false
       - key: POOFBG_API_KEY

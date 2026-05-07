@@ -29,10 +29,19 @@ SUPPORTED_ASPECT_RATIOS = [
 ]
 
 
+DEFAULT_MODEL = "gemini-3.1-flash-image-preview"
+
+
 def get_api_key(provided_key: str | None) -> str | None:
     if provided_key:
         return provided_key
     return os.environ.get("GEMINI_API_KEY")
+
+
+def get_model(provided_model: str | None) -> str:
+    if provided_model:
+        return provided_model
+    return os.environ.get("GEMINI_IMAGE_MODEL", DEFAULT_MODEL)
 
 
 def auto_detect_resolution(max_input_dim: int) -> str:
@@ -63,12 +72,14 @@ def main() -> None:
     parser.add_argument("--resolution", "-r", choices=["1K", "2K", "4K"], default=None)
     parser.add_argument("--aspect-ratio", "-a", choices=SUPPORTED_ASPECT_RATIOS, default=None)
     parser.add_argument("--api-key", "-k")
+    parser.add_argument("--model", "-m", default=None)
     args = parser.parse_args()
 
     api_key = get_api_key(args.api_key)
     if not api_key:
         print("Error: provide --api-key or set GEMINI_API_KEY", file=sys.stderr)
         sys.exit(1)
+    model = get_model(args.model)
 
     from google import genai
     from google.genai import types
@@ -110,9 +121,10 @@ def main() -> None:
     if args.aspect_ratio:
         image_cfg_kwargs["aspect_ratio"] = args.aspect_ratio
 
+    print(f"Using model: {model}", file=sys.stderr)
     try:
         response = client.models.generate_content(
-            model="gemini-3-pro-image-preview",
+            model=model,
             contents=contents,
             config=types.GenerateContentConfig(
                 response_modalities=["TEXT", "IMAGE"],
