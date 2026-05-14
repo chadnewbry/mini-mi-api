@@ -4,6 +4,7 @@
 # dependencies = [
 #     "google-genai>=1.0.0",
 #     "pillow>=10.0.0",
+#     "pillow-heif>=0.16.0",
 # ]
 # ///
 """
@@ -14,6 +15,11 @@ import argparse
 import os
 import sys
 from pathlib import Path
+
+try:
+    from pillow_heif import register_heif_opener
+except Exception:
+    register_heif_opener = None
 
 SUPPORTED_ASPECT_RATIOS = [
     "1:1",
@@ -85,6 +91,14 @@ def main() -> None:
     from google.genai import types
     from PIL import Image as PILImage
 
+    heif_supported = False
+    if register_heif_opener is not None:
+        try:
+            register_heif_opener()
+            heif_supported = True
+        except Exception:
+            heif_supported = False
+
     client = genai.Client(api_key=api_key)
     output_path = Path(args.filename)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -96,6 +110,15 @@ def main() -> None:
             print(f"Error: too many input images ({len(args.input_images)}), max 14", file=sys.stderr)
             sys.exit(1)
         for img_path in args.input_images:
+            image_suffix = Path(img_path).suffix.lower()
+            if image_suffix in {".heic", ".heif"} and not heif_supported:
+                print(
+                    "Error loading input image "
+                    f"'{img_path}': HEIC/HEIF support is unavailable. "
+                    "Install a working pillow-heif build in this environment.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
             try:
                 with PILImage.open(img_path) as img:
                     copied = img.copy()
