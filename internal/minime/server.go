@@ -253,6 +253,7 @@ type jobRecord struct {
 	CandidateCount  *int              `json:"candidate_count,omitempty"`
 	RequestedStates []string          `json:"requested_states,omitempty"`
 	StatePrompts    map[string]string `json:"state_prompts,omitempty"`
+	AutoComplete    bool              `json:"auto_complete,omitempty"`
 	CreatedAt       time.Time         `json:"created_at"`
 	UpdatedAt       time.Time         `json:"updated_at"`
 	FinishedAt      time.Time         `json:"finished_at,omitempty"`
@@ -316,6 +317,12 @@ type selectionRequest struct {
 
 type candidatesGenerateRequest struct {
 	PromptSuffix string `json:"prompt_suffix"`
+	// AutoComplete, when true, chains the full hands-off pipeline: once the
+	// candidates job finishes the server auto-selects the first candidate as the
+	// base and enqueues a generate-states job for the default state set. Used by
+	// the onboarding "Mini Me autocomplete" flow so a new user's Mini Me populates
+	// itself in the background.
+	AutoComplete bool `json:"auto_complete,omitempty"`
 }
 
 type candidateGenerateRequest struct {
@@ -840,6 +847,7 @@ func (s *Server) handleGenerateCandidates(w http.ResponseWriter, r *http.Request
 
 	job := s.createQueuedJobLocked(session, "generate-candidates", nil)
 	job.PromptSuffix = strings.TrimSpace(request.PromptSuffix)
+	job.AutoComplete = request.AutoComplete
 	session.Status = "queued-candidates"
 	session.CurrentStepLabel = "Queued candidate generation"
 	session.Notes = "Candidate generation queued."
@@ -1781,6 +1789,20 @@ func (s *Server) processJob(jobID string) {
 		s.completeJobLocked(job, fmt.Sprintf("Candidate %d generated.", candidateIndex))
 	case "generate-candidates":
 		s.completeJobLocked(job, "Candidates generated.")
+		if job.AutoComplete && len(workingSession.Candidates) > 0 {
+			// Hands-off pipeline: auto-pick the first candidate as the base
+			// (mirrors the placeholder generator's auto-select and satisfies
+			// sessionHasSelectedAsset), then enqueue the full state set. The
+			// queued states job is picked up by the scanQueuedJobs poller — we
+			// must not call enqueueJob here because it locks s.mu (held).
+			base := workingSession.Candidates[0]
+			workingSession.SelectedCandidateID = base.ID
+			workingSession.PublishedPreview = base
+			s.createQueuedJobLocked(workingSession, "generate-states", defaultStates)
+			workingSession.Status = "queued-states"
+			workingSession.CurrentStepLabel = "Queued state generation"
+			workingSession.Notes = "State generation queued automatically."
+		}
 	case "generate-states":
 		s.completeJobLocked(job, "State generation complete.")
 	default:

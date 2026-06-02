@@ -2202,6 +2202,96 @@ func fetchSessionSnapshot(t *testing.T, server *Server, sessionID string) remote
 	return snapshot
 }
 
+func TestAutoCompleteCandidatesChainsBaseSelectionAndStates(t *testing.T) {
+	t.Parallel()
+
+	server := newTestServer(t)
+
+	createRecorder := performRequest(t, server.Handler(), http.MethodPost, "/v1/minime/sessions", `{}`)
+	var created remoteSessionSnapshot
+	decodeJSON(t, createRecorder, &created)
+
+	uploadRecorder := uploadSourcePhoto(t, server, created.SessionID, "source.png", minimalPNG, "image/png")
+	if uploadRecorder.Code != http.StatusOK {
+		t.Fatalf("upload source photo: status %d: %s", uploadRecorder.Code, uploadRecorder.Body.String())
+	}
+
+	candidateRecorder := performRequest(t, server.Handler(), http.MethodPost, "/v1/minime/sessions/"+created.SessionID+"/candidates:generate", `{"auto_complete":true}`)
+	if candidateRecorder.Code != http.StatusOK {
+		t.Fatalf("candidates:generate status %d: %s", candidateRecorder.Code, candidateRecorder.Body.String())
+	}
+	candidateJobID := candidateRecorder.Header().Get("X-MiniMe-Job-ID")
+	if candidateJobID == "" {
+		t.Fatal("expected queued candidate job header")
+	}
+	if job := waitForJobTerminal(t, server, candidateJobID); job.Status != "completed" {
+		t.Fatalf("expected completed candidate job, got %q", job.Status)
+	}
+
+	// The candidate job's completion must auto-select a base and enqueue a
+	// generate-states job for the full default state set, with no further client
+	// calls. Poll the session until every default state has a final asset.
+	deadline := time.Now().Add(10 * time.Second)
+	var snapshot remoteSessionSnapshot
+	for time.Now().Before(deadline) {
+		snapshot = fetchSessionSnapshot(t, server, created.SessionID)
+		finals := map[string]bool{}
+		for _, state := range snapshot.StateAssets {
+			if state.FinalAsset != nil {
+				finals[state.StateName] = true
+			}
+		}
+		if snapshot.SelectedCandidate != "" && len(finals) == len(defaultStates) {
+			for _, want := range defaultStates {
+				if !finals[want] {
+					t.Fatalf("missing final asset for state %q", want)
+				}
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	t.Fatalf("timed out waiting for auto-completed states; status=%q selected=%q states=%d", snapshot.Status, snapshot.SelectedCandidate, len(snapshot.StateAssets))
+}
+
+func TestCandidatesWithoutAutoCompleteDoesNotChainStates(t *testing.T) {
+	t.Parallel()
+
+	server := newTestServer(t)
+
+	createRecorder := performRequest(t, server.Handler(), http.MethodPost, "/v1/minime/sessions", `{}`)
+	var created remoteSessionSnapshot
+	decodeJSON(t, createRecorder, &created)
+
+	uploadRecorder := uploadSourcePhoto(t, server, created.SessionID, "source.png", minimalPNG, "image/png")
+	if uploadRecorder.Code != http.StatusOK {
+		t.Fatalf("upload source photo: status %d: %s", uploadRecorder.Code, uploadRecorder.Body.String())
+	}
+
+	candidateRecorder := performRequest(t, server.Handler(), http.MethodPost, "/v1/minime/sessions/"+created.SessionID+"/candidates:generate", `{}`)
+	if candidateRecorder.Code != http.StatusOK {
+		t.Fatalf("candidates:generate status %d: %s", candidateRecorder.Code, candidateRecorder.Body.String())
+	}
+	candidateJobID := candidateRecorder.Header().Get("X-MiniMe-Job-ID")
+	if job := waitForJobTerminal(t, server, candidateJobID); job.Status != "completed" {
+		t.Fatalf("expected completed candidate job, got %q", job.Status)
+	}
+
+	// Without auto_complete, the server must not enqueue a states job. (The
+	// placeholder generator may auto-select a base on its own, so the absence of
+	// chained state generation is the signal.) Give the worker poller a window to
+	// (incorrectly) chain, then assert no state assets were produced.
+	time.Sleep(300 * time.Millisecond)
+	snapshot := fetchSessionSnapshot(t, server, created.SessionID)
+	if len(snapshot.StateAssets) != 0 {
+		t.Fatalf("expected no state assets without auto_complete, got %d", len(snapshot.StateAssets))
+	}
+	if snapshot.Status == "queued-states" || snapshot.Status == "generating-states" || snapshot.Status == "states-generated" {
+		t.Fatalf("expected no chained state generation without auto_complete, got status %q", snapshot.Status)
+	}
+}
+
 func uploadSourcePhoto(t *testing.T, server *Server, sessionID, fileName string, contents []byte, contentType string) *httptest.ResponseRecorder {
 	t.Helper()
 
